@@ -1,0 +1,23 @@
+name = "trading-arena-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trading-arena"
+database_id = "0257d042-8dc0-4c0a-931f-a218f07fbca7"
+
+[[durable_objects.bindings]]
+name = "ARENA_ROOM"
+class_name = "ArenaRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ArenaRoom"]
+
+# Uncomment for development
+# [dev]
+# port = 8787

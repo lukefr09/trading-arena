@@ -1,0 +1,14 @@
+# Trading Arena Orchestrator Cron Schedule
+# Install with: sudo cp orchestrator.cron /etc/cron.d/trading-arena
+
+# Market hours: 9:30 AM - 4:00 PM ET, Monday-Friday
+# Note: Cron times should be in server timezone (adjust if not ET)
+
+# First round at 9:30 AM ET
+30 9 * * 1-5 trading cd /home/trading/trading-arena/orchestrator && ./run.sh >> /home/trading/trading-arena/logs/cron.log 2>&1
+
+# Hourly rounds from 10 AM to 4 PM ET
+0 10-16 * * 1-5 trading cd /home/trading/trading-arena/orchestrator && ./run.sh >> /home/trading/trading-arena/logs/cron.log 2>&1
+
+# Clean up old logs weekly
+0 0 * * 0 trading find /home/trading/trading-arena/logs -name "*.log" -mtime +7 -delete
