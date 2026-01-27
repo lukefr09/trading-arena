@@ -21,6 +21,8 @@ class Bot:
     last_commentary: Optional[str] = None
     enabled: bool = True
     updated_at: Optional[datetime] = None
+    alpaca_api_key: Optional[str] = None
+    alpaca_secret_key: Optional[str] = None
 
     @property
     def position_value(self) -> float:
@@ -73,4 +75,6 @@ class Bot:
             last_commentary=data.get("last_commentary"),
             enabled=data.get("enabled", True),
             updated_at=updated_at,
+            alpaca_api_key=data.get("alpaca_api_key"),
+            alpaca_secret_key=data.get("alpaca_secret_key"),
         )

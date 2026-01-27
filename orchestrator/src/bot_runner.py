@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -13,13 +14,23 @@ logger = logging.getLogger(__name__)
 
 # Path to prompts directory
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+MCP_SERVER_DIR = Path(__file__).parent.parent.parent / "mcp-server"
 
 
 class BotRunner:
     """Runs bot trading sessions via Claude Code CLI."""
 
-    def __init__(self, model: str = "claude-opus-4-20250514"):
+    def __init__(
+        self,
+        model: str = "claude-opus-4-20250514",
+        cf_api_url: Optional[str] = None,
+        cf_api_key: Optional[str] = None,
+        finnhub_api_key: Optional[str] = None,
+    ):
         self.model = model
+        self.cf_api_url = cf_api_url or os.environ.get("CF_API_URL", "")
+        self.cf_api_key = cf_api_key or os.environ.get("CF_API_KEY", "")
+        self.finnhub_api_key = finnhub_api_key or os.environ.get("FINNHUB_API_KEY", "")
 
     def get_system_prompt(self, bot: Bot) -> str:
         """Load system prompt for a bot."""
@@ -36,60 +47,92 @@ class BotRunner:
             state: Current game state
 
         Returns:
-            Context string with portfolio and market info
+            Context string with tools overview and workflow
         """
-        # Portfolio summary
         portfolio_lines = [
-            f"# Your Portfolio (Round {state.current_round + 1})",
-            f"Cash: ${bot.cash:,.2f}",
-            f"Total Value: ${bot.total_value:,.2f}",
-            f"Return: {((bot.total_value / state.starting_cash) - 1) * 100:+.2f}%",
+            f"# Trading Round {state.current_round + 1}",
             "",
-            "## Positions:",
-        ]
-
-        if bot.positions:
-            for pos in bot.positions:
-                value = pos.shares * (pos.current_price or pos.avg_cost)
-                pnl = pos.unrealized_pnl
-                pnl_pct = pos.unrealized_pnl_percent
-                portfolio_lines.append(
-                    f"- {pos.symbol}: {pos.shares} shares @ ${pos.avg_cost:.2f} avg "
-                    f"(current: ${pos.current_price:.2f}, value: ${value:,.2f}, P&L: {pnl_pct:+.2f}%)"
-                )
-        else:
-            portfolio_lines.append("- No positions")
-
-        # Leaderboard context
-        portfolio_lines.extend(["", "## Leaderboard:"])
-        for i, b in enumerate(state.get_leaderboard(), 1):
-            marker = " <- You" if b.id == bot.id else ""
-            portfolio_lines.append(
-                f"{i}. {b.name}: ${b.total_value:,.2f} ({((b.total_value / state.starting_cash) - 1) * 100:+.2f}%){marker}"
-            )
-
-        # Recent trades by this bot
-        bot_trades = [t for t in state.recent_trades if t.bot_id == bot.id][-5:]
-        if bot_trades:
-            portfolio_lines.extend(["", "## Your Recent Trades:"])
-            for trade in bot_trades:
-                portfolio_lines.append(
-                    f"- Round {trade.round}: {trade.side} {trade.shares} {trade.symbol} @ ${trade.price:.2f}"
-                )
-
-        portfolio_lines.extend([
+            "## Your MCP Tools",
+            "",
+            "You have access to TWO MCP servers:",
+            "",
+            "### Trading Arena Server (market data & constraints)",
+            "- `get_price(symbol)` - Get real-time price for a stock",
+            "- `get_prices(symbols)` - Get prices for multiple stocks",
+            "- `get_technicals(symbol, indicator)` - Get RSI, MACD, SMA, etc.",
+            "- `get_history(symbol, days)` - Get historical price data",
+            "- `search_news(symbol)` - Get recent news",
+            "- `get_dividend(symbol)` - Get dividend yield and metrics",
+            "- `get_constraints()` - See your trading rules",
+            "- `validate_order(side, shares, symbol, ...)` - Check if a trade is allowed",
+            "- `record_trade(symbol, side, shares, price, reason)` - Log trade for dashboard",
+            "- `get_leaderboard()` - See competition standings",
+            "",
+            "### Alpaca Server (actual trading)",
+            "- `get_account_info()` - Get your cash, equity, buying power",
+            "- `get_all_positions()` - List all your positions",
+            "- `place_stock_order(symbol, qty, side, type, time_in_force)` - Execute a trade",
+            "",
+            "## How to Trade",
+            "",
+            "Follow this workflow for each trade:",
+            "",
+            "1. **Check your account**: `get_account_info()` to see cash/equity",
+            "2. **Check your positions**: `get_all_positions()` to see what you hold",
+            "3. **Research** (optional): `get_price()`, `get_technicals()`, `search_news()`",
+            "4. **Validate**: `validate_order(side, shares, symbol, price, current_cash, current_equity, positions)`",
+            "5. **Execute** (if allowed): `place_stock_order(symbol, qty, side='buy'/'sell', type='market', time_in_force='day')`",
+            "6. **Record**: `record_trade(symbol, side, shares, price, reason)` for the dashboard",
+            "",
+            "**Important**: Always validate before placing orders! Your bot has constraints.",
+            "",
+            "You can make 0-5 trades per round.",
             "",
             "---",
-            "",
-            "Use the MCP tools to check prices, news, and technical indicators.",
-            "When ready to trade, output your trades in this exact format:",
-            "TRADE: BUY 50 NVDA @ 142.30",
-            "TRADE: SELL 100 AAPL @ 189.50",
-            "",
-            "You may make 0-5 trades this round. Include brief commentary on your reasoning.",
-        ])
+        ]
 
         return "\n".join(portfolio_lines)
+
+    def _generate_mcp_config(self, bot: Bot) -> dict:
+        """Generate MCP config with both Trading Arena and Alpaca servers.
+
+        Args:
+            bot: The bot to generate config for
+
+        Returns:
+            MCP config dict with both servers
+        """
+        config: dict = {
+            "mcpServers": {
+                "trading-arena": {
+                    "command": "python3",
+                    "args": ["-m", "mcp_server.src.server"],
+                    "cwd": str(MCP_SERVER_DIR.parent),
+                    "env": {
+                        "BOT_ID": bot.id,
+                        "CF_API_URL": self.cf_api_url,
+                        "CF_API_KEY": self.cf_api_key,
+                        "FINNHUB_API_KEY": self.finnhub_api_key,
+                    },
+                },
+            }
+        }
+
+        # Add Alpaca MCP server if credentials are available
+        if bot.alpaca_api_key and bot.alpaca_secret_key:
+            config["mcpServers"]["alpaca"] = {
+                "command": "uvx",
+                "args": ["alpaca-mcp-server", "serve"],
+                "env": {
+                    "ALPACA_API_KEY": bot.alpaca_api_key,
+                    "ALPACA_SECRET_KEY": bot.alpaca_secret_key,
+                    "ALPACA_PAPER_TRADE": "true",
+                },
+            }
+        else:
+            logger.warning(f"Bot {bot.id} has no Alpaca credentials - trading will be unavailable")
+
+        return config
 
     def run_bot(
         self,
@@ -159,12 +202,12 @@ class BotRunner:
         mcp_config_path: Optional[str] = None,
         timeout: int = 180,
     ) -> Optional[str]:
-        """Run bot with MCP server for market data.
+        """Run bot with MCP servers for market data and trading.
 
         Args:
             bot: Bot to run
             state: Current game state
-            mcp_config_path: Path to MCP config file
+            mcp_config_path: Path to MCP config file (if None, generates per-bot config)
             timeout: Max seconds for bot
 
         Returns:
@@ -173,10 +216,24 @@ class BotRunner:
         system_prompt = self.get_system_prompt(bot)
         context = self.build_context(bot, state)
 
+        # Generate per-bot MCP config if not provided
+        config_file = None
+        if mcp_config_path is None:
+            mcp_config = self._generate_mcp_config(bot)
+            config_file = tempfile.NamedTemporaryFile(
+                mode='w',
+                suffix='.json',
+                delete=False,
+            )
+            json.dump(mcp_config, config_file)
+            config_file.close()
+            mcp_config_path = config_file.name
+            logger.debug(f"Generated MCP config for {bot.id} at {mcp_config_path}")
+
         try:
             cmd = ["claude", "--model", self.model, "--print"]
 
-            # Add MCP config if provided
+            # Add MCP config
             if mcp_config_path and os.path.exists(mcp_config_path):
                 cmd.extend(["--mcp-config", mcp_config_path])
 
@@ -188,7 +245,7 @@ class BotRunner:
             cmd.extend(["--system-prompt", system_prompt])
             cmd.extend(["--prompt", context])
 
-            logger.info(f"Running bot {bot.name} with MCP tools")
+            logger.info(f"Running bot {bot.name} with MCP tools (BOT_ID={bot.id})")
 
             result = subprocess.run(
                 cmd,
@@ -210,3 +267,10 @@ class BotRunner:
         except Exception as e:
             logger.error(f"Error running bot {bot.name}: {e}")
             return None
+        finally:
+            # Clean up temp config file
+            if config_file is not None:
+                try:
+                    os.unlink(config_file.name)
+                except OSError:
+                    pass

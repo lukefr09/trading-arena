@@ -18,6 +18,8 @@ CREATE TABLE bots (
     session_id TEXT,
     last_commentary TEXT,
     enabled INTEGER DEFAULT 1,
+    alpaca_api_key TEXT,      -- Alpaca paper trading API key
+    alpaca_secret_key TEXT,   -- Alpaca paper trading secret key
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
