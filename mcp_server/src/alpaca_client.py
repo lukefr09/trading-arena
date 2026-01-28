@@ -241,13 +241,15 @@ class AlpacaClient:
                 },
                 timeout=10.0,
             )
-            # Convert BTC/USD to BTCUSD for the API
-            api_symbol = symbol.replace("/", "")
-            response = data_client.get(f"/v1beta3/crypto/us/latest/trades/{api_symbol}")
+            # Use query param with original symbol format (BTC/USD)
+            response = data_client.get(f"/v1beta3/crypto/us/latest/trades?symbols={symbol}")
             response.raise_for_status()
             data = response.json()
             data_client.close()
-            return float(data.get("trade", {}).get("p", 0))
+            # Response is {"trades": {"BTC/USD": {"p": 12345.67, ...}}}
+            trades = data.get("trades", {})
+            trade = trades.get(symbol, {})
+            return float(trade.get("p", 0))
         except Exception:
             return None
 

@@ -524,12 +524,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                             }
                         else:
                             # 5. Execute on Alpaca
+                            # Crypto requires "gtc" time_in_force, stocks use "day"
+                            tif = "gtc" if "/" in symbol else "day"
                             order_result = alpaca.place_order(
                                 symbol=symbol,
                                 qty=qty,
                                 side=side.lower(),
                                 order_type="market",
-                                time_in_force="day",
+                                time_in_force=tif,
                             )
 
                             if not order_result.success:
