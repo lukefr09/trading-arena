@@ -25,7 +25,7 @@ class Config:
     max_trades_per_round: int = 5
 
     # Claude settings
-    claude_model: str = "claude-opus-4-20250514"
+    claude_model: str = "claude-opus-4-5-20251101"
 
     # Bot constraints
     baseline_bots: dict = None
@@ -80,7 +80,7 @@ def load_config() -> Config:
         finnhub_api_key=finnhub_api_key,
         starting_cash=float(os.environ.get("STARTING_CASH", "100000")),
         max_trades_per_round=int(os.environ.get("MAX_TRADES_PER_ROUND", "5")),
-        claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-4-20250514"),
+        claude_model=os.environ.get("CLAUDE_MODEL", "claude-opus-4-5-20251101"),
     )
 
 
