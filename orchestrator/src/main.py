@@ -1,20 +1,22 @@
-"""Main orchestration loop for Trading Arena."""
+"""Main orchestration loop for Trading Arena.
+
+Bot-Driven Execution Architecture:
+- Bots trade directly via MCP tools (place_order)
+- MCP server validates constraints and executes on Alpaca
+- Orchestrator just coordinates timing and stores commentary
+"""
 
 import argparse
 import logging
+import random
 import sys
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from .bot_runner import BotRunner
 from .config import Config, load_config
-from .models import Bot, GameState, Trade
-from .price_fetcher import PriceFetcher
+from .models import Bot, GameState
 from .state import StateManager
-from .trade_executor import TradeExecutor, update_position_prices
-from .trade_parser import extract_commentary, parse_trades
-from .trade_validator import TradeValidator, validate_quant_commentary
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,15 +26,25 @@ logger = logging.getLogger(__name__)
 
 
 class TradingArena:
-    """Main orchestrator for the trading arena."""
+    """Main orchestrator for the trading arena.
+
+    With bot-driven execution, the orchestrator's job is simple:
+    1. Check if game is running
+    2. Increment round
+    3. Run each bot (they trade via MCP tools directly)
+    4. Store commentary
+    5. Push real-time updates
+    """
 
     def __init__(self, config: Config):
         self.config = config
         self.state_manager = StateManager(config)
-        self.price_fetcher = PriceFetcher(config.finnhub_api_key)
-        self.bot_runner = BotRunner(config.claude_model)
-        self.validator = TradeValidator(config)
-        self.executor = TradeExecutor()
+        self.bot_runner = BotRunner(
+            model=config.claude_model,
+            cf_api_url=config.cf_api_url,
+            cf_api_key=config.cf_api_key,
+            finnhub_api_key=config.finnhub_api_key,
+        )
 
     def run_round(self, bot_ids: Optional[list[str]] = None) -> dict:
         """Run a single trading round.
@@ -66,37 +78,26 @@ class TradingArena:
         state.current_round = new_round
         logger.info(f"Round {new_round}")
 
-        # Update all position prices
-        logger.info("Fetching current prices...")
-        prices = self.price_fetcher.update_all_prices(bots)
-
-        for bot in bots:
-            update_position_prices(bot, prices)
+        # Randomize bot execution order (no information advantage)
+        random.shuffle(bots)
 
         # Run each bot
-        all_trades: list[Trade] = []
         results = {}
 
         for bot in bots:
             logger.info(f"Running bot: {bot.name}")
-            result = self._run_single_bot(bot, state, prices)
+            result = self._run_single_bot(bot, state)
             results[bot.id] = result
 
-            if result.get("trades"):
-                all_trades.extend(result["trades"])
-
-            # Update bot state
+            # Update bot state (commentary)
             self.state_manager.update_bot(bot)
 
             # Push real-time update
             self.state_manager.push_update("bot_update", {
-                "bot": bot.to_dict(),
-                "trades": [t.to_dict() for t in result.get("trades", [])],
+                "bot_id": bot.id,
+                "bot_name": bot.name,
+                "commentary": result.get("commentary"),
             })
-
-        # Record all trades
-        if all_trades:
-            self.state_manager.record_trades(all_trades)
 
         # Final state save
         state.updated_at = datetime.utcnow()
@@ -108,12 +109,11 @@ class TradingArena:
             "leaderboard": [b.to_dict() for b in state.get_leaderboard()],
         })
 
-        logger.info(f"Round {new_round} complete. {len(all_trades)} trades executed.")
+        logger.info(f"Round {new_round} complete.")
 
         return {
             "round": new_round,
             "bots_run": len(bots),
-            "trades_executed": len(all_trades),
             "results": results,
         }
 
@@ -121,81 +121,45 @@ class TradingArena:
         self,
         bot: Bot,
         state: GameState,
-        prices: dict[str, float],
     ) -> dict:
-        """Run a single bot and process its trades.
+        """Run a single bot's trading session.
+
+        Bots trade directly via MCP tools:
+        - get_portfolio() to see their holdings
+        - place_order() to execute trades (with constraint validation)
+        - get_leaderboard() to see standings
+
+        The orchestrator just captures the output/commentary.
 
         Args:
             bot: Bot to run
             state: Current game state
-            prices: Current market prices
 
         Returns:
-            Dict with bot's output, trades, and any errors
+            Dict with bot's output and commentary
         """
-        mcp_config = Path(__file__).parent.parent / "mcp-config.json"
-
-        output = self.bot_runner.run_bot_with_mcp(
-            bot,
-            state,
-            mcp_config_path=str(mcp_config) if mcp_config.exists() else None,
-        )
+        output = self.bot_runner.run_bot_with_mcp(bot, state)
 
         if output is None:
-            return {"error": "Bot failed to respond", "trades": []}
+            logger.error(f"Bot {bot.name} failed to respond")
+            return {"error": "Bot failed to respond", "commentary": None}
 
-        # Parse trades from output
-        parsed_trades = parse_trades(output)
-        commentary = extract_commentary(output)
+        # Extract commentary (everything the bot said)
+        # Truncate for storage
+        commentary = output[:2000] if output else None
 
-        # Update bot commentary
+        # Update bot's last commentary
         bot.last_commentary = commentary
-
-        # Special check for Quant bot
-        if bot.id == "quant" and parsed_trades:
-            if not validate_quant_commentary(commentary):
-                logger.warning(f"Quant bot did not cite technical indicator")
-                # Still allow trades but log warning
-
-        # Validate and execute trades
-        executed_trades: list[Trade] = []
-        validation_errors: list[str] = []
-
-        # Limit trades per round
-        for parsed in parsed_trades[: self.config.max_trades_per_round]:
-            # Get latest price for symbol
-            if parsed.symbol not in prices:
-                price = self.price_fetcher.get_price(parsed.symbol)
-                if price:
-                    prices[parsed.symbol] = price
-
-            # Validate trade
-            result = self.validator.validate(bot, parsed, prices)
-
-            if result.valid:
-                # Execute trade
-                trade = self.executor.execute(
-                    bot, parsed, state.current_round, commentary
-                )
-                executed_trades.append(trade)
-                logger.info(f"{bot.name}: {trade.side} {trade.shares} {trade.symbol}")
-            else:
-                validation_errors.append(result.rejection_reason or "Validation failed")
-                logger.warning(
-                    f"{bot.name}: Trade rejected - {result.rejection_reason}"
-                )
+        bot.updated_at = datetime.utcnow()
 
         return {
-            "output": output[:1000] if output else None,  # Truncate for storage
-            "trades": executed_trades,
+            "output": output[:1000] if output else None,
             "commentary": commentary,
-            "validation_errors": validation_errors,
         }
 
     def close(self):
         """Clean up resources."""
         self.state_manager.close()
-        self.price_fetcher.close()
 
 
 def main():

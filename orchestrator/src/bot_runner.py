@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Path to prompts directory
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-MCP_SERVER_DIR = Path(__file__).parent.parent.parent / "mcp-server"
+MCP_SERVER_DIR = Path(__file__).parent.parent.parent / "mcp_server"
 
 
 class BotRunner:
@@ -54,37 +54,34 @@ class BotRunner:
             "",
             "## Your MCP Tools",
             "",
-            "You have access to TWO MCP servers:",
+            "You have access to the **trading-arena** MCP server with these tools:",
             "",
-            "### Trading Arena Server (market data & constraints)",
+            "### Research Tools",
             "- `get_price(symbol)` - Get real-time price for a stock",
             "- `get_prices(symbols)` - Get prices for multiple stocks",
             "- `get_technicals(symbol, indicator)` - Get RSI, MACD, SMA, etc.",
             "- `get_history(symbol, days)` - Get historical price data",
             "- `search_news(symbol)` - Get recent news",
             "- `get_dividend(symbol)` - Get dividend yield and metrics",
-            "- `get_constraints()` - See your trading rules",
-            "- `validate_order(side, shares, symbol, ...)` - Check if a trade is allowed",
-            "- `record_trade(symbol, side, shares, price, reason)` - Log trade for dashboard",
-            "- `get_leaderboard()` - See competition standings",
             "",
-            "### Alpaca Server (actual trading)",
-            "- `get_account_info()` - Get your cash, equity, buying power",
-            "- `get_all_positions()` - List all your positions",
-            "- `place_stock_order(symbol, qty, side, type, time_in_force)` - Execute a trade",
+            "### Trading Tools",
+            "- `get_portfolio()` - Get your cash, equity, and all positions with P&L",
+            "- `get_constraints()` - See your trading rules",
+            "- `place_order(symbol, qty, side, reason)` - **Execute a trade** (validates constraints first!)",
+            "- `get_leaderboard()` - See competition standings",
             "",
             "## How to Trade",
             "",
-            "Follow this workflow for each trade:",
+            "**The `place_order` tool handles everything:**",
+            "1. Validates against your constraints",
+            "2. Executes on Alpaca if allowed",
+            "3. Records for the dashboard",
             "",
-            "1. **Check your account**: `get_account_info()` to see cash/equity",
-            "2. **Check your positions**: `get_all_positions()` to see what you hold",
-            "3. **Research** (optional): `get_price()`, `get_technicals()`, `search_news()`",
-            "4. **Validate**: `validate_order(side, shares, symbol, price, current_cash, current_equity, positions)`",
-            "5. **Execute** (if allowed): `place_stock_order(symbol, qty, side='buy'/'sell', type='market', time_in_force='day')`",
-            "6. **Record**: `record_trade(symbol, side, shares, price, reason)` for the dashboard",
+            "Just call `place_order(symbol, qty, side, reason)` and you'll get:",
+            '- `{"status": "filled", ...}` if successful',
+            '- `{"status": "rejected", "reason": "..."}` if your constraints block it',
             "",
-            "**Important**: Always validate before placing orders! Your bot has constraints.",
+            "**React to rejections in character!** If a trade is rejected, that's part of the game.",
             "",
             "You can make 0-5 trades per round.",
             "",
@@ -94,43 +91,44 @@ class BotRunner:
         return "\n".join(portfolio_lines)
 
     def _generate_mcp_config(self, bot: Bot) -> dict:
-        """Generate MCP config with both Trading Arena and Alpaca servers.
+        """Generate MCP config with unified Trading Arena server.
+
+        The trading-arena MCP server handles EVERYTHING:
+        - Market data (via Finnhub)
+        - Constraint validation
+        - Order execution (via Alpaca)
+        - Trade recording (via Workers API)
 
         Args:
             bot: The bot to generate config for
 
         Returns:
-            MCP config dict with both servers
+            MCP config dict
         """
+        env = {
+            "BOT_ID": bot.id,
+            "CF_API_URL": self.cf_api_url,
+            "CF_API_KEY": self.cf_api_key,
+            "FINNHUB_API_KEY": self.finnhub_api_key,
+        }
+
+        # Add Alpaca credentials if available
+        if bot.alpaca_api_key and bot.alpaca_secret_key:
+            env["ALPACA_API_KEY"] = bot.alpaca_api_key
+            env["ALPACA_SECRET_KEY"] = bot.alpaca_secret_key
+        else:
+            logger.warning(f"Bot {bot.id} has no Alpaca credentials - trading will be unavailable")
+
         config: dict = {
             "mcpServers": {
                 "trading-arena": {
                     "command": "python3",
                     "args": ["-m", "mcp_server.src.server"],
                     "cwd": str(MCP_SERVER_DIR.parent),
-                    "env": {
-                        "BOT_ID": bot.id,
-                        "CF_API_URL": self.cf_api_url,
-                        "CF_API_KEY": self.cf_api_key,
-                        "FINNHUB_API_KEY": self.finnhub_api_key,
-                    },
+                    "env": env,
                 },
             }
         }
-
-        # Add Alpaca MCP server if credentials are available
-        if bot.alpaca_api_key and bot.alpaca_secret_key:
-            config["mcpServers"]["alpaca"] = {
-                "command": "uvx",
-                "args": ["alpaca-mcp-server", "serve"],
-                "env": {
-                    "ALPACA_API_KEY": bot.alpaca_api_key,
-                    "ALPACA_SECRET_KEY": bot.alpaca_secret_key,
-                    "ALPACA_PAPER_TRADE": "true",
-                },
-            }
-        else:
-            logger.warning(f"Bot {bot.id} has no Alpaca credentials - trading will be unavailable")
 
         return config
 

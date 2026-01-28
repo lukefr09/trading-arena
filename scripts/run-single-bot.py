@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run a single bot for testing."""
+"""Run a single bot for testing.
+
+With bot-driven execution, the bot trades directly via MCP tools.
+This script just runs the bot and displays what happens.
+"""
 
 import argparse
 import os
@@ -14,22 +18,25 @@ load_dotenv()
 
 from orchestrator.src.bot_runner import BotRunner
 from orchestrator.src.config import load_config
-from orchestrator.src.models import Bot, GameState, Position
-from orchestrator.src.price_fetcher import PriceFetcher
 from orchestrator.src.state import StateManager
-from orchestrator.src.trade_executor import TradeExecutor, update_position_prices
-from orchestrator.src.trade_parser import extract_commentary, parse_trades
-from orchestrator.src.trade_validator import TradeValidator
 
 
 def run_single_bot(bot_id: str, dry_run: bool = False):
-    """Run a single bot's trading session."""
+    """Run a single bot's trading session.
+
+    The bot trades directly via MCP tools:
+    - get_portfolio() to see holdings
+    - place_order() to execute trades (validates constraints first)
+    - get_leaderboard() to see standings
+    """
     config = load_config()
     state_manager = StateManager(config)
-    price_fetcher = PriceFetcher(config.finnhub_api_key)
-    bot_runner = BotRunner(config.claude_model)
-    validator = TradeValidator(config)
-    executor = TradeExecutor()
+    bot_runner = BotRunner(
+        model=config.claude_model,
+        cf_api_url=config.cf_api_url,
+        cf_api_key=config.cf_api_key,
+        finnhub_api_key=config.finnhub_api_key,
+    )
 
     print(f"Loading game state...")
     state = state_manager.load_state()
@@ -42,71 +49,48 @@ def run_single_bot(bot_id: str, dry_run: bool = False):
         sys.exit(1)
 
     print(f"\nRunning bot: {bot.name} ({bot.type})")
-    print(f"  Cash: ${bot.cash:,.2f}")
-    print(f"  Total Value: ${bot.total_value:,.2f}")
-    print(f"  Positions: {len(bot.positions)}")
+    print(f"  Has Alpaca credentials: {bool(bot.alpaca_api_key)}")
 
-    # Update position prices
-    print("\nFetching current prices...")
-    prices = price_fetcher.update_all_prices([bot])
-    update_position_prices(bot, prices)
+    if dry_run:
+        print("\n[Dry run - bot will not be invoked]")
+        print("In production, the bot would:")
+        print("  1. Check portfolio via get_portfolio()")
+        print("  2. Research via get_price(), get_technicals(), etc.")
+        print("  3. Execute trades via place_order()")
+        print("     - Constraints validated automatically")
+        print("     - Rejected trades returned with reason")
+        print("  4. See standings via get_leaderboard()")
+        state_manager.close()
+        return
 
-    # Run the bot
-    print("\nRunning bot session...")
-    output = bot_runner.run_bot(bot, state)
+    # Run the bot with MCP tools
+    print("\nRunning bot session with MCP tools...")
+    print("The bot will trade directly via place_order().")
+    print("Constraint violations will be returned as rejections.")
+    print("-" * 50)
+
+    output = bot_runner.run_bot_with_mcp(bot, state)
 
     if output is None:
         print("Error: Bot failed to respond")
         sys.exit(1)
 
     print("\n--- Bot Output ---")
-    print(output[:2000])  # Truncate for display
-    if len(output) > 2000:
+    print(output[:3000])  # Show more output
+    if len(output) > 3000:
         print("... (truncated)")
     print("--- End Output ---\n")
 
-    # Parse trades
-    parsed_trades = parse_trades(output)
-    commentary = extract_commentary(output)
+    # Update bot commentary
+    bot.last_commentary = output[:2000] if output else None
 
-    print(f"Parsed {len(parsed_trades)} trades:")
-    for trade in parsed_trades:
-        print(f"  {trade.side} {trade.shares} {trade.symbol} @ ${trade.price:.2f}")
-
-    if commentary:
-        print(f"\nCommentary: {commentary[:200]}...")
-
-    if dry_run:
-        print("\n[Dry run - trades not executed]")
-        return
-
-    # Validate and execute
-    print("\nValidating and executing trades...")
-    for parsed in parsed_trades[:config.max_trades_per_round]:
-        # Get price if needed
-        if parsed.symbol not in prices:
-            price = price_fetcher.get_price(parsed.symbol)
-            if price:
-                prices[parsed.symbol] = price
-
-        result = validator.validate(bot, parsed, prices)
-
-        if result.valid:
-            trade = executor.execute(bot, parsed, state.current_round, commentary)
-            print(f"  EXECUTED: {trade.side} {trade.shares} {trade.symbol}")
-        else:
-            print(f"  REJECTED: {parsed.side} {parsed.symbol} - {result.rejection_reason}")
-
-    # Save state
-    print("\nSaving bot state...")
+    # Save bot state
+    print("Saving bot state...")
     state_manager.update_bot(bot)
 
-    print(f"\nFinal state:")
-    print(f"  Cash: ${bot.cash:,.2f}")
-    print(f"  Total Value: ${bot.total_value:,.2f}")
+    print("\nDone! Check the dashboard to see any trades executed.")
 
     state_manager.close()
-    price_fetcher.close()
 
 
 def main():
@@ -118,7 +102,7 @@ def main():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Parse trades but don't execute",
+        help="Show what would happen without running",
     )
     args = parser.parse_args()
 

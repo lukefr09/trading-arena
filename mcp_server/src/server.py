@@ -8,6 +8,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from .alpaca_client import AlpacaClient
 from .finnhub_client import FinnhubClient
 from .trading_client import TradingClient
 
@@ -16,9 +17,13 @@ load_dotenv()
 server = Server("trading-arena")
 finnhub_client: Optional[FinnhubClient] = None
 trading_client: Optional[TradingClient] = None
+alpaca_client: Optional[AlpacaClient] = None
 
 # Bot ID from environment (set by orchestrator)
 BOT_ID = os.environ.get("BOT_ID", "")
+# Alpaca credentials from environment (set by orchestrator)
+ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")
+ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
 
 
 def get_finnhub_client() -> FinnhubClient:
@@ -39,6 +44,20 @@ def get_trading_client() -> Optional[TradingClient]:
             # Missing API credentials - trading tools won't be available
             pass
     return trading_client
+
+
+def get_alpaca_client() -> Optional[AlpacaClient]:
+    """Get or create Alpaca client if credentials are set."""
+    global alpaca_client
+    if alpaca_client is None and ALPACA_API_KEY and ALPACA_SECRET_KEY:
+        try:
+            alpaca_client = AlpacaClient(
+                api_key=ALPACA_API_KEY,
+                secret_key=ALPACA_SECRET_KEY,
+            )
+        except ValueError:
+            pass
+    return alpaca_client
 
 
 @server.list_tools()
@@ -203,82 +222,39 @@ async def list_tools() -> list[Tool]:
                 },
             ),
             Tool(
-                name="validate_order",
-                description="Check if a trade is allowed before placing it with Alpaca. Returns whether the trade passes your bot's constraints.",
+                name="get_portfolio",
+                description="Get your current portfolio from Alpaca - cash, equity, buying power, and all positions with P&L.",
                 inputSchema={
                     "type": "object",
-                    "properties": {
-                        "side": {
-                            "type": "string",
-                            "enum": ["BUY", "SELL"],
-                            "description": "Trade direction",
-                        },
-                        "shares": {
-                            "type": "integer",
-                            "description": "Number of shares",
-                            "minimum": 1,
-                        },
-                        "symbol": {
-                            "type": "string",
-                            "description": "Stock symbol",
-                        },
-                        "price": {
-                            "type": "number",
-                            "description": "Current price per share (for position size validation)",
-                        },
-                        "current_cash": {
-                            "type": "number",
-                            "description": "Your current cash balance from Alpaca",
-                        },
-                        "current_equity": {
-                            "type": "number",
-                            "description": "Your current total equity from Alpaca",
-                        },
-                        "positions": {
-                            "type": "array",
-                            "description": "Your current positions from Alpaca [{symbol, qty, market_value}, ...]",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "symbol": {"type": "string"},
-                                    "qty": {"type": "number"},
-                                    "market_value": {"type": "number"},
-                                },
-                            },
-                        },
-                    },
-                    "required": ["side", "shares", "symbol"],
+                    "properties": {},
+                    "required": [],
                 },
             ),
             Tool(
-                name="record_trade",
-                description="Record a completed trade for the dashboard. Call this AFTER successfully placing an order with Alpaca.",
+                name="place_order",
+                description="Place a trade order. Validates against your constraints FIRST, then executes on Alpaca if allowed, then records for dashboard. Returns success/rejection.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "symbol": {
                             "type": "string",
-                            "description": "Stock symbol that was traded",
+                            "description": "Stock symbol to trade",
+                        },
+                        "qty": {
+                            "type": "number",
+                            "description": "Number of shares",
                         },
                         "side": {
                             "type": "string",
-                            "enum": ["BUY", "SELL"],
+                            "enum": ["buy", "sell"],
                             "description": "Trade direction",
-                        },
-                        "shares": {
-                            "type": "integer",
-                            "description": "Number of shares traded",
-                        },
-                        "price": {
-                            "type": "number",
-                            "description": "Fill price from Alpaca",
                         },
                         "reason": {
                             "type": "string",
-                            "description": "Your reasoning for this trade",
+                            "description": "Your reasoning for this trade. REQUIRED for Quant (must cite technical indicator).",
                         },
                     },
-                    "required": ["symbol", "side", "shares", "price"],
+                    "required": ["symbol", "qty", "side"],
                 },
             ),
             Tool(
@@ -346,9 +322,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             elif name == "get_dividend":
                 result = get_dividend(finnhub, arguments["symbol"])
 
-        # Trading tools (use Trading client)
-        elif name in ("get_constraints", "validate_order", "record_trade", "get_leaderboard"):
+        # Trading tools (use Trading client + Alpaca client)
+        elif name in ("get_constraints", "get_portfolio", "place_order", "get_leaderboard"):
             trading = get_trading_client()
+            alpaca = get_alpaca_client()
+
             if trading is None:
                 result = {"error": "Trading not available - BOT_ID not configured"}
 
@@ -360,37 +338,121 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     "rules": constraints.rules,
                 }
 
-            elif name == "validate_order":
-                # If price/cash/equity provided, use full validation
-                if all(k in arguments for k in ("price", "current_cash", "current_equity")):
-                    result = trading.validate_order_with_price(
-                        side=arguments["side"],
-                        shares=arguments["shares"],
-                        symbol=arguments["symbol"],
-                        price=arguments["price"],
-                        current_cash=arguments["current_cash"],
-                        current_equity=arguments["current_equity"],
-                        positions=arguments.get("positions", []),
-                    )
+            elif name == "get_portfolio":
+                if alpaca is None:
+                    result = {"error": "Alpaca not configured - missing API credentials"}
                 else:
-                    # Basic validation (symbol-only constraints)
-                    result = trading.validate_order(
-                        side=arguments["side"],
-                        shares=arguments["shares"],
-                        symbol=arguments["symbol"],
-                        current_cash=arguments.get("current_cash", 0),
-                        current_equity=arguments.get("current_equity", 0),
-                        positions=arguments.get("positions", []),
-                    )
+                    portfolio = alpaca.get_portfolio()
+                    result = {
+                        "cash": portfolio.cash,
+                        "equity": portfolio.equity,
+                        "buying_power": portfolio.buying_power,
+                        "positions": [
+                            {
+                                "symbol": p.symbol,
+                                "qty": p.qty,
+                                "market_value": p.market_value,
+                                "avg_entry_price": p.avg_entry_price,
+                                "current_price": p.current_price,
+                                "unrealized_pl": p.unrealized_pl,
+                                "unrealized_plpc": round(p.unrealized_plpc * 100, 2),
+                            }
+                            for p in portfolio.positions
+                        ],
+                    }
 
-            elif name == "record_trade":
-                result = trading.record_trade(
-                    symbol=arguments["symbol"],
-                    side=arguments["side"],
-                    shares=arguments["shares"],
-                    price=arguments["price"],
-                    reason=arguments.get("reason"),
-                )
+            elif name == "place_order":
+                if alpaca is None:
+                    result = {"error": "Alpaca not configured - missing API credentials"}
+                else:
+                    symbol = arguments["symbol"].upper()
+                    qty = float(arguments["qty"])
+                    side = arguments["side"].upper()
+                    reason = arguments.get("reason")
+
+                    # 1. Get current portfolio
+                    portfolio = alpaca.get_portfolio()
+                    positions = [
+                        {
+                            "symbol": p.symbol,
+                            "qty": p.qty,
+                            "market_value": p.market_value,
+                        }
+                        for p in portfolio.positions
+                    ]
+
+                    # 2. Get current price
+                    finnhub = get_finnhub_client()
+                    quote = finnhub.get_quote(symbol)
+                    price = quote.get("c", 0)  # Current price
+
+                    if price <= 0:
+                        result = {"status": "rejected", "reason": f"Could not get price for {symbol}"}
+                    else:
+                        # 3. Get dividend yield if needed (for Boomer)
+                        dividend_yield = None
+                        if trading.bot_id == "boomer" and side == "BUY":
+                            try:
+                                financials = finnhub.get_basic_financials(symbol)
+                                metrics = financials.get("metric", {})
+                                # Dividend yield is returned as percentage
+                                div_yield_annual = metrics.get("dividendYieldIndicatedAnnual", 0)
+                                dividend_yield = div_yield_annual / 100 if div_yield_annual else 0
+                            except Exception:
+                                dividend_yield = 0
+
+                        # 4. Validate constraints
+                        validation = trading.validate_order_full(
+                            side=side,
+                            shares=int(qty),
+                            symbol=symbol,
+                            price=price,
+                            current_cash=portfolio.cash,
+                            current_equity=portfolio.equity,
+                            positions=positions,
+                            technical_reason=reason,
+                            dividend_yield=dividend_yield,
+                        )
+
+                        if not validation.allowed:
+                            result = {
+                                "status": "rejected",
+                                "reason": validation.reason,
+                            }
+                        else:
+                            # 5. Execute on Alpaca
+                            order_result = alpaca.place_order(
+                                symbol=symbol,
+                                qty=qty,
+                                side=side.lower(),
+                                order_type="market",
+                                time_in_force="day",
+                            )
+
+                            if not order_result.success:
+                                result = {
+                                    "status": "rejected",
+                                    "reason": order_result.error,
+                                }
+                            else:
+                                # 6. Record trade for dashboard
+                                fill_price = order_result.filled_avg_price or price
+                                trading.record_trade(
+                                    symbol=symbol,
+                                    side=side,
+                                    shares=int(qty),
+                                    price=fill_price,
+                                    reason=reason,
+                                )
+
+                                result = {
+                                    "status": "filled",
+                                    "symbol": symbol,
+                                    "qty": qty,
+                                    "side": side.lower(),
+                                    "price": fill_price,
+                                    "order_id": order_result.order_id,
+                                }
 
             elif name == "get_leaderboard":
                 state = trading.get_leaderboard()

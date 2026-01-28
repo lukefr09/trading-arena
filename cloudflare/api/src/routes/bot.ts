@@ -167,6 +167,17 @@ bot.put('/:id', authMiddleware, async (c) => {
     values.push(body.enabled ? 1 : 0);
   }
 
+  // Alpaca credentials (from request body, not from Bot type)
+  const bodyAny = body as Record<string, unknown>;
+  if (bodyAny.alpaca_api_key !== undefined) {
+    updates.push('alpaca_api_key = ?');
+    values.push(bodyAny.alpaca_api_key);
+  }
+  if (bodyAny.alpaca_secret_key !== undefined) {
+    updates.push('alpaca_secret_key = ?');
+    values.push(bodyAny.alpaca_secret_key);
+  }
+
   updates.push("updated_at = datetime('now')");
   values.push(botId);
 

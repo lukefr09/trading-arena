@@ -1,8 +1,8 @@
 """HTTP client for Trading Arena API - constraint validation and trade recording."""
 
 import os
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Callable, Optional
 
 import httpx
 
@@ -21,6 +21,16 @@ class BotConstraints:
     requires_hedges: bool = False
     no_crypto: bool = False
     no_leverage: bool = False
+    min_dividend_yield: Optional[float] = None
+    requires_technical_citation: bool = False
+
+
+@dataclass
+class ValidationResult:
+    """Result of constraint validation."""
+
+    allowed: bool
+    reason: Optional[str] = None
 
 
 @dataclass
@@ -60,19 +70,29 @@ SP500_SYMBOLS = {
     'SPY', 'QQQ', 'IWM', 'DIA', 'VOO', 'VTI', 'BND', 'AGG', 'TLT',
 }
 
-# Hedge symbols for Doomer
+# Hedge symbols for Doomer (inverse ETFs, volatility, precious metals, bonds)
 HEDGE_SYMBOLS = {
     'SQQQ', 'UVXY', 'SH', 'SPXS', 'VXX', 'SDOW', 'SPXU', 'QID', 'SDS', 'TZA',
+    'GLD', 'SLV', 'TLT', 'BND', 'IEF',  # Precious metals and bonds
 }
 
 # Leveraged/meme stocks
 LEVERAGED_SYMBOLS = {
     'TQQQ', 'SOXL', 'UPRO', 'SPXL', 'TECL', 'FAS', 'LABU', 'FNGU', 'WEBL',
-    'SQQQ', 'SOXS', 'SPXS', 'SPXU', 'UVXY',
+    'SQQQ', 'SOXS', 'SPXS', 'SPXU', 'UVXY', 'SVXY',
 }
 
 # Crypto-related stocks
-CRYPTO_STOCKS = {'COIN', 'MARA', 'RIOT', 'BITO'}
+CRYPTO_STOCKS = {'COIN', 'MARA', 'RIOT', 'BITO', 'MSTR', 'GBTC'}
+
+# Technical indicators that Quant must cite
+TECHNICAL_INDICATORS = [
+    "rsi", "macd", "sma", "ema", "bollinger", "stochastic",
+    "momentum", "roc", "atr", "adx", "obv", "vwap",
+    "moving average", "relative strength", "support", "resistance",
+    "oversold", "overbought", "crossover", "divergence",
+    "50-day", "200-day", "golden cross", "death cross",
+]
 
 # Constraint definitions for each bot type
 CONSTRAINT_DEFINITIONS: dict[str, BotConstraints] = {
@@ -98,11 +118,13 @@ CONSTRAINT_DEFINITIONS: dict[str, BotConstraints] = {
     "boomer": BotConstraints(
         type="baseline",
         rules=[
-            "No crypto-related stocks (COIN, MARA, RIOT, BITO)",
+            "Only dividend-paying stocks with 1%+ yield",
+            "No crypto-related stocks (COIN, MARA, RIOT, etc.)",
             "No leveraged ETFs",
         ],
         no_crypto=True,
         no_leverage=True,
+        min_dividend_yield=0.01,  # 1%
     ),
     "quant": BotConstraints(
         type="baseline",
@@ -110,12 +132,13 @@ CONSTRAINT_DEFINITIONS: dict[str, BotConstraints] = {
             "Must cite technical indicator for every trade",
             "RSI, MACD, MA, Bollinger Bands, etc.",
         ],
+        requires_technical_citation=True,
     ),
     "doomer": BotConstraints(
         type="baseline",
         rules=[
             "Max 30% in long equity positions",
-            "Must maintain hedge positions (SQQQ, UVXY, SH, etc.)",
+            "Must maintain hedge positions (SQQQ, UVXY, SH, GLD, etc.)",
         ],
         max_long_equity_pct=0.30,
         requires_hedges=True,
@@ -346,6 +369,176 @@ class TradingClient:
                     }
 
         return {"allowed": True}
+
+    def validate_order_full(
+        self,
+        side: str,
+        shares: int,
+        symbol: str,
+        price: float,
+        current_cash: float,
+        current_equity: float,
+        positions: list[dict],
+        technical_reason: Optional[str] = None,
+        dividend_yield: Optional[float] = None,
+    ) -> ValidationResult:
+        """Full constraint validation with all checks.
+
+        Args:
+            side: "BUY" or "SELL"
+            shares: Number of shares
+            symbol: Stock symbol
+            price: Current/estimated price per share
+            current_cash: Current cash from Alpaca account
+            current_equity: Current equity from Alpaca account
+            positions: Current positions from Alpaca (list of {symbol, qty, market_value})
+            technical_reason: Technical justification (required for Quant)
+            dividend_yield: Dividend yield as decimal (required for Boomer buys)
+
+        Returns:
+            ValidationResult with allowed flag and optional reason
+        """
+        constraints = self.get_bot_constraints()
+        symbol = symbol.upper()
+        side = side.upper()
+        trade_value = shares * price
+
+        # Free agents have no constraints
+        if constraints.type == "free_agent":
+            return ValidationResult(allowed=True)
+
+        # --- TURTLE CONSTRAINTS ---
+        if self.bot_id == "turtle":
+            # S&P 500 only
+            if constraints.sp500_only and symbol not in SP500_SYMBOLS:
+                return ValidationResult(
+                    allowed=False,
+                    reason=f"{symbol} not in S&P 500 universe. Turtle can only trade S&P 500 stocks and major ETFs.",
+                )
+
+            if side == "BUY":
+                # Max position size (5%)
+                if constraints.max_position_pct:
+                    existing_pos = next((p for p in positions if p.get("symbol") == symbol), None)
+                    existing_value = existing_pos.get("market_value", 0) if existing_pos else 0
+                    new_position_value = existing_value + trade_value
+                    position_pct = new_position_value / current_equity if current_equity > 0 else 1
+
+                    if position_pct > constraints.max_position_pct:
+                        return ValidationResult(
+                            allowed=False,
+                            reason=f"Position would be {position_pct * 100:.1f}% of portfolio, exceeding {constraints.max_position_pct * 100:.0f}% max.",
+                        )
+
+                # Min cash (30%)
+                if constraints.min_cash_pct:
+                    cash_after = current_cash - trade_value
+                    cash_pct = cash_after / current_equity if current_equity > 0 else 0
+
+                    if cash_pct < constraints.min_cash_pct:
+                        return ValidationResult(
+                            allowed=False,
+                            reason=f"Cash after trade would be {cash_pct * 100:.1f}%, below {constraints.min_cash_pct * 100:.0f}% minimum.",
+                        )
+
+        # --- DEGEN CONSTRAINTS ---
+        if self.bot_id == "degen" and side == "SELL":
+            if constraints.max_cash_pct:
+                cash_after = current_cash + trade_value
+                cash_pct = cash_after / current_equity if current_equity > 0 else 1
+
+                if cash_pct > constraints.max_cash_pct:
+                    return ValidationResult(
+                        allowed=False,
+                        reason=f"Cash after sale would be {cash_pct * 100:.1f}%, exceeding {constraints.max_cash_pct * 100:.0f}% max. Must stay invested!",
+                    )
+
+        # --- BOOMER CONSTRAINTS ---
+        if self.bot_id == "boomer" and side == "BUY":
+            # No crypto
+            if constraints.no_crypto and symbol in CRYPTO_STOCKS:
+                return ValidationResult(
+                    allowed=False,
+                    reason=f"{symbol} is crypto-related. That's not investing, that's speculation.",
+                )
+
+            # No leveraged ETFs
+            if constraints.no_leverage and symbol in LEVERAGED_SYMBOLS:
+                return ValidationResult(
+                    allowed=False,
+                    reason=f"{symbol} is a leveraged ETF. That's gambling, not investing.",
+                )
+
+            # Minimum dividend yield (1%)
+            if constraints.min_dividend_yield is not None:
+                if dividend_yield is None:
+                    return ValidationResult(
+                        allowed=False,
+                        reason=f"Dividend yield required for {symbol}. Use get_dividend() first.",
+                    )
+                if dividend_yield < constraints.min_dividend_yield:
+                    yield_pct = dividend_yield * 100
+                    min_pct = constraints.min_dividend_yield * 100
+                    return ValidationResult(
+                        allowed=False,
+                        reason=f"{symbol} yields only {yield_pct:.2f}%, below {min_pct:.0f}% minimum. If it doesn't pay you to hold it, why hold it?",
+                    )
+
+        # --- QUANT CONSTRAINTS ---
+        if self.bot_id == "quant":
+            if constraints.requires_technical_citation:
+                if not technical_reason:
+                    return ValidationResult(
+                        allowed=False,
+                        reason="No technical indicator cited. Every trade must reference RSI, MACD, moving averages, or other technical signals.",
+                    )
+
+                # Check that citation mentions actual indicators
+                reason_lower = technical_reason.lower()
+                has_indicator = any(ind in reason_lower for ind in TECHNICAL_INDICATORS)
+
+                if not has_indicator:
+                    return ValidationResult(
+                        allowed=False,
+                        reason=f"Technical reason doesn't cite a valid indicator. Use RSI, MACD, moving averages, support/resistance, etc.",
+                    )
+
+        # --- DOOMER CONSTRAINTS ---
+        if self.bot_id == "doomer":
+            is_hedge = symbol in HEDGE_SYMBOLS
+
+            # Max 30% long equity
+            if side == "BUY" and not is_hedge and constraints.max_long_equity_pct:
+                long_equity = sum(
+                    p.get("market_value", 0) for p in positions
+                    if p.get("symbol") not in HEDGE_SYMBOLS
+                )
+                new_long_equity = long_equity + trade_value
+                long_pct = new_long_equity / current_equity if current_equity > 0 else 1
+
+                if long_pct > constraints.max_long_equity_pct:
+                    return ValidationResult(
+                        allowed=False,
+                        reason=f"Long equity would be {long_pct * 100:.1f}%, exceeding {constraints.max_long_equity_pct * 100:.0f}% max. The crash is coming.",
+                    )
+
+            # Must maintain hedges
+            if side == "SELL" and is_hedge and constraints.requires_hedges:
+                hedge_positions = [p for p in positions if p.get("symbol") in HEDGE_SYMBOLS]
+                current_pos = next((p for p in hedge_positions if p.get("symbol") == symbol), None)
+
+                if current_pos:
+                    current_qty = current_pos.get("qty", 0)
+                    remaining = current_qty - shares
+                    other_hedges = [p for p in hedge_positions if p.get("symbol") != symbol]
+
+                    if remaining <= 0 and len(other_hedges) == 0:
+                        return ValidationResult(
+                            allowed=False,
+                            reason="Cannot sell last hedge position. Must maintain at least one hedge.",
+                        )
+
+        return ValidationResult(allowed=True)
 
     def record_trade(
         self,
