@@ -470,6 +470,57 @@ social.get('/context/:botId', async (c) => {
     });
   }
 
+  // ==================== BOT MEMORIES ====================
+  // Short-term: Last 3 rounds (all memories)
+  const shortTermRounds = 3;
+  const shortTermMemories = await db.prepare(`
+    SELECT round, type, content, importance
+    FROM memories
+    WHERE bot_id = ? AND round > ?
+    ORDER BY round DESC, created_at DESC
+    LIMIT 25
+  `).bind(botId, Math.max(0, currentRound - shortTermRounds)).all();
+
+  // Long-term: High importance memories (7+) from older rounds
+  const longTermMemories = await db.prepare(`
+    SELECT round, type, content, importance
+    FROM memories
+    WHERE bot_id = ? AND round <= ? AND importance >= 7
+    ORDER BY importance DESC, round DESC
+    LIMIT 15
+  `).bind(botId, Math.max(0, currentRound - shortTermRounds)).all();
+
+  // Active strategy (most recent)
+  const activeStrategy = await db.prepare(`
+    SELECT content, round
+    FROM memories
+    WHERE bot_id = ? AND type = 'strategy'
+    ORDER BY round DESC, created_at DESC
+    LIMIT 1
+  `).bind(botId).first();
+
+  // Rival notes (all, for relationship tracking)
+  const rivalNotes = await db.prepare(`
+    SELECT content, round
+    FROM memories
+    WHERE bot_id = ? AND type = 'rival'
+    ORDER BY round DESC
+    LIMIT 20
+  `).bind(botId).all();
+
+  // Format short-term memories by type
+  const shortTermByType: Record<string, Array<{ content: string; round: number }>> = {};
+  for (const m of shortTermMemories.results) {
+    const type = m.type as string;
+    if (!shortTermByType[type]) {
+      shortTermByType[type] = [];
+    }
+    shortTermByType[type].push({
+      content: m.content as string,
+      round: m.round as number,
+    });
+  }
+
   return c.json({
     round: currentRound,
     starting_cash: startingCash,
@@ -504,6 +555,24 @@ social.get('/context/:botId', async (c) => {
       is_dm: m.to_bot !== null,
       round: m.round,
     })),
+    // Your persistent memories across rounds
+    your_memories: {
+      short_term: shortTermByType,  // Last 3 rounds, grouped by type
+      long_term: longTermMemories.results.map(m => ({
+        type: m.type,
+        content: m.content,
+        round: m.round,
+        importance: m.importance,
+      })),
+      active_strategy: activeStrategy ? {
+        content: activeStrategy.content,
+        since_round: activeStrategy.round,
+      } : null,
+      rival_notes: rivalNotes.results.map(r => ({
+        content: r.content,
+        round: r.round,
+      })),
+    },
   });
 });
 

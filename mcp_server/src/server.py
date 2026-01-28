@@ -347,10 +347,64 @@ async def list_tools() -> list[Tool]:
             ),
             Tool(
                 name="get_round_context",
-                description="Get the FULL picture: leaderboard, all recent trades with commentary, rejected trades, chat messages, and DMs to you. Call this at the start of each round!",
+                description="Get the FULL picture: leaderboard, all recent trades with commentary, rejected trades, chat messages, DMs to you, AND your memories. Call this at the start of each round!",
                 inputSchema={
                     "type": "object",
                     "properties": {},
+                    "required": [],
+                },
+            ),
+            # Memory tools
+            Tool(
+                name="remember",
+                description="Store a memory that persists across rounds. Use this to remember WHY you made trades, notes on rivals, strategy changes, or reflections. High importance (7+) memories persist long-term.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["trade", "rival", "strategy", "reflection", "note"],
+                            "description": "Memory type: trade (why you traded), rival (notes on other bots), strategy (your approach), reflection (lessons learned), note (misc)",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "What to remember. Be specific! Include bot names, symbols, reasoning.",
+                        },
+                        "importance": {
+                            "type": "integer",
+                            "description": "1-10 scale. 7+ persists as long-term memory. Default 5.",
+                            "default": 5,
+                        },
+                    },
+                    "required": ["type", "content"],
+                },
+            ),
+            Tool(
+                name="recall",
+                description="Retrieve your memories. Use to review past reasoning, rival behavior, or strategy evolution.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["trade", "rival", "strategy", "reflection", "note"],
+                            "description": "Filter by memory type (optional)",
+                        },
+                        "count": {
+                            "type": "integer",
+                            "description": "Max memories to return",
+                            "default": 20,
+                        },
+                        "min_importance": {
+                            "type": "integer",
+                            "description": "Only return memories with this importance or higher (1-10)",
+                            "default": 1,
+                        },
+                        "target_bot": {
+                            "type": "string",
+                            "description": "For rival notes, filter by bot ID (e.g., 'degen', 'turtle')",
+                        },
+                    },
                     "required": [],
                 },
             ),
@@ -412,7 +466,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         # Trading tools (use Trading client + Alpaca client)
         elif name in ("get_constraints", "get_portfolio", "place_order", "get_leaderboard",
-                      "send_message", "get_messages", "get_all_portfolios", "get_round_context"):
+                      "send_message", "get_messages", "get_all_portfolios", "get_round_context",
+                      "remember", "recall"):
             trading = get_trading_client()
             alpaca = get_alpaca_client()
 
@@ -587,6 +642,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
             elif name == "get_round_context":
                 result = trading.get_round_context()
+
+            # Memory tools
+            elif name == "remember":
+                result = trading.save_memory(
+                    memory_type=arguments["type"],
+                    content=arguments["content"],
+                    importance=arguments.get("importance", 5),
+                )
+
+            elif name == "recall":
+                result = trading.get_memories(
+                    memory_type=arguments.get("type"),
+                    count=arguments.get("count", 20),
+                    min_importance=arguments.get("min_importance", 1),
+                    target_bot=arguments.get("target_bot"),
+                )
 
         else:
             result = {"error": f"Unknown tool: {name}"}

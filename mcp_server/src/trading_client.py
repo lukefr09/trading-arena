@@ -704,3 +704,103 @@ class TradingClient:
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    # ==================== MEMORY FEATURES ====================
+
+    # Valid memory types
+    MEMORY_TYPES = ['trade', 'rival', 'strategy', 'reflection', 'note']
+
+    def save_memory(
+        self,
+        memory_type: str,
+        content: str,
+        importance: int = 5,
+    ) -> dict:
+        """Save a memory for persistence across rounds.
+
+        Args:
+            memory_type: One of 'trade', 'rival', 'strategy', 'reflection', 'note'
+            content: The memory content (what to remember)
+            importance: 1-10 scale (10 = most important, persists longer)
+
+        Returns:
+            {"success": True, "memory_id": ...} or {"success": False, "error": ...}
+        """
+        if memory_type not in self.MEMORY_TYPES:
+            return {
+                "success": False,
+                "error": f"Invalid type. Must be one of: {', '.join(self.MEMORY_TYPES)}",
+            }
+
+        if importance < 1 or importance > 10:
+            return {"success": False, "error": "Importance must be between 1 and 10"}
+
+        try:
+            response = self._client.post(
+                "/api/memory",
+                json={
+                    "bot_id": self.bot_id,
+                    "type": memory_type,
+                    "content": content,
+                    "importance": importance,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_memories(
+        self,
+        memory_type: Optional[str] = None,
+        count: int = 20,
+        min_importance: int = 1,
+        target_bot: Optional[str] = None,
+    ) -> dict:
+        """Get memories for this bot.
+
+        Args:
+            memory_type: Filter by type (trade, rival, strategy, reflection, note)
+            count: Max memories to return
+            min_importance: Minimum importance level (1-10)
+            target_bot: For rival notes, filter by target bot ID
+
+        Returns:
+            {"bot_id": ..., "count": ..., "memories": [...]}
+        """
+        try:
+            params: dict[str, str | int] = {"count": count}
+            if memory_type:
+                params["type"] = memory_type
+            if min_importance > 1:
+                params["min_importance"] = min_importance
+            if target_bot:
+                params["target_bot"] = target_bot
+
+            response = self._client.get(
+                f"/api/memory/{self.bot_id}",
+                params=params,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"error": str(e), "memories": []}
+
+    def get_memory_context(self) -> dict:
+        """Get organized memories for context (short-term and long-term).
+
+        Returns:
+            {
+                "current_round": ...,
+                "short_term": {...},  # Last 3 rounds grouped by type
+                "long_term": [...],   # High importance older memories
+                "active_strategy": {...},
+                "rival_notes": [...]
+            }
+        """
+        try:
+            response = self._client.get(f"/api/memory/{self.bot_id}/context")
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"error": str(e)}

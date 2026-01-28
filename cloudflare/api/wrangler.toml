@@ -9,6 +9,7 @@ ENVIRONMENT = "production"
 binding = "DB"
 database_name = "trading-arena"
 database_id = "0257d042-8dc0-4c0a-931f-a218f07fbca7"
+migrations_dir = "../migrations"
 
 [[durable_objects.bindings]]
 name = "ARENA_ROOM"
