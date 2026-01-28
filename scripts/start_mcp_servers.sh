@@ -7,6 +7,16 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 MCP_SERVER_DIR="$PROJECT_ROOT/mcp_server"
+VENV_DIR="$PROJECT_ROOT/venv"
+PYTHON="$VENV_DIR/bin/python3"
+
+# Check if venv exists, create if not
+if [ ! -f "$PYTHON" ]; then
+    echo "Creating virtual environment..."
+    python3 -m venv "$VENV_DIR"
+    echo "Installing dependencies..."
+    "$VENV_DIR/bin/pip" install -r "$MCP_SERVER_DIR/requirements.txt"
+fi
 
 # Load environment variables if .env exists
 if [ -f "$PROJECT_ROOT/.env" ]; then
@@ -47,7 +57,7 @@ start_bot_server() {
     CF_API_URL="${CF_API_URL}" \
     CF_API_KEY="${CF_API_KEY}" \
     FINNHUB_API_KEY="${FINNHUB_API_KEY}" \
-    python3 -m mcp_server.src.server_http --port "$port" --host 127.0.0.1 \
+    "$PYTHON" -m mcp_server.src.server_http --port "$port" --host 127.0.0.1 \
         > "/tmp/mcp-$bot_id.log" 2>&1 &
 
     echo "  Started with PID $!"
