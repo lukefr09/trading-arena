@@ -197,12 +197,11 @@ social.get('/portfolios', async (c) => {
     last_commentary: string | null;
     positions: Array<{
       symbol: string;
-      qty: number;
-      market_value: number;
-      avg_entry_price: number;
+      shares: number;
+      avg_cost: number;
       current_price: number;
-      unrealized_pl: number;
-      unrealized_plpc: number;
+      market_value: number;
+      gain_pct: number;
     }>;
   }
 
@@ -253,12 +252,11 @@ social.get('/portfolios', async (c) => {
 
             positions = posData.map(p => ({
               symbol: p.symbol,
-              qty: parseFloat(p.qty),
-              market_value: parseFloat(p.market_value),
-              avg_entry_price: parseFloat(p.avg_entry_price),
+              shares: parseFloat(p.qty),
+              avg_cost: parseFloat(p.avg_entry_price),
               current_price: parseFloat(p.current_price),
-              unrealized_pl: parseFloat(p.unrealized_pl),
-              unrealized_plpc: parseFloat(p.unrealized_plpc) * 100,
+              market_value: parseFloat(p.market_value),
+              gain_pct: parseFloat(p.unrealized_plpc) * 100,
             }));
           }
         }
