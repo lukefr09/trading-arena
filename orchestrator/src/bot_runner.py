@@ -249,8 +249,8 @@ class BotRunner:
             if mcp_config_path and os.path.exists(mcp_config_path):
                 cmd.extend(["--mcp-config", mcp_config_path])
 
-            # Model and print mode, bypass permissions for MCP tools
-            cmd.extend(["--model", self.model, "--print", "--dangerously-skip-permissions"])
+            # Model and print mode, allow all MCP tools
+            cmd.extend(["--model", self.model, "--print", "--allowedTools", "mcp__trading-arena__*"])
 
             # Resume session if available
             if bot.session_id:
