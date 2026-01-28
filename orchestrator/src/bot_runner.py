@@ -242,19 +242,24 @@ class BotRunner:
             logger.debug(f"Generated MCP config for {bot.id} at {mcp_config_path}")
 
         try:
-            cmd = ["claude", "--model", self.model, "--print"]
+            # Build command - order matters! MCP config before --print, prompt at end
+            cmd = ["claude"]
 
-            # Add MCP config
+            # Add MCP config first
             if mcp_config_path and os.path.exists(mcp_config_path):
                 cmd.extend(["--mcp-config", mcp_config_path])
+
+            # Model and print mode
+            cmd.extend(["--model", self.model, "--print"])
 
             # Resume session if available
             if bot.session_id:
                 cmd.extend(["--resume", bot.session_id])
 
-            # System prompt as initial context
+            # System prompt
             cmd.extend(["--system-prompt", system_prompt])
-            # Prompt is a positional argument, not a flag
+
+            # Prompt is positional - must be last
             cmd.append(context)
 
             logger.info(f"Running bot {bot.name} with MCP tools (BOT_ID={bot.id})")
