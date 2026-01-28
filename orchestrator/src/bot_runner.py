@@ -244,9 +244,9 @@ class BotRunner:
         try:
             cmd = ["claude", "--model", self.model, "--print"]
 
-            # Add MCP config - use strict to ignore user's default MCP servers
+            # Add MCP config
             if mcp_config_path and os.path.exists(mcp_config_path):
-                cmd.extend(["--mcp-config", mcp_config_path, "--strict-mcp-config"])
+                cmd.extend(["--mcp-config", mcp_config_path])
 
             # Resume session if available
             if bot.session_id:
