@@ -72,6 +72,8 @@ interface TimelineEvent {
   price?: number;
   message?: string;
   is_dm?: boolean;
+  to_bot?: string | null;
+  to_name?: string | null;
 }
 
 interface GameState {
@@ -143,6 +145,7 @@ export default function TradingArena() {
         time: m.created_at,
         message: m.content,
         is_dm: m.is_dm,
+        to_bot: m.to_bot,
       }));
 
       const combined = [...tradeEvents, ...chatEvents]
@@ -373,8 +376,18 @@ export default function TradingArena() {
 
         <div style={{ ...styles.panel, borderRight: selectedBot ? '1px solid #30363d' : 'none' }}>
           <div style={styles.panelHeader}>
-            <span>Live Feed</span>
-            <span style={{ color: '#6e7681', fontWeight: '400' }}>{timeline.length} events</span>
+            <span>
+              {selectedBot ? (
+                <><span style={{ color: botColors[selectedBot] || '#888' }}>{selectedPortfolio?.name}</span> Activity</>
+              ) : (
+                'Live Feed'
+              )}
+            </span>
+            <span style={{ color: '#6e7681', fontWeight: '400' }}>
+              {selectedBot
+                ? timeline.filter(e => e.bot_id === selectedBot || e.to_bot === selectedBot).length
+                : timeline.length} events
+            </span>
           </div>
           <div style={styles.panelContent}>
             {timeline.length === 0 ? (
@@ -382,7 +395,7 @@ export default function TradingArena() {
                 No activity yet
               </div>
             ) : (
-              timeline.map((event) => (
+              timeline.filter(e => !selectedBot || e.bot_id === selectedBot || e.to_bot === selectedBot).map((event) => (
                 <div
                   key={event.id}
                   style={{
@@ -419,7 +432,11 @@ export default function TradingArena() {
                       </>
                     ) : (
                       <span>
-                        {event.is_dm && <span style={{ color: '#a855f7', marginRight: '4px' }}>[DM]</span>}
+                        {event.is_dm && (
+                          <span style={{ color: '#a855f7', marginRight: '4px' }}>
+                            [DM to {event.to_bot ? event.to_bot.charAt(0).toUpperCase() + event.to_bot.slice(1) : '?'}]
+                          </span>
+                        )}
                         {event.message}
                       </span>
                     )}
