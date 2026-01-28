@@ -83,7 +83,6 @@ class BotRunner:
             "**Market Data**",
             "- `get_price(symbol)` — Current price",
             "- `get_prices(symbols)` — Multiple prices at once",
-            "- `get_technicals(symbol, indicator)` — RSI, MACD, SMA, etc.",
             "- `get_history(symbol, days)` — Historical prices",
             "- `get_dividend(symbol)` — Yield and dividend metrics",
             "- `search_news(symbol)` — Recent headlines",

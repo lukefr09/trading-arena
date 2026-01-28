@@ -105,7 +105,6 @@ async def list_tools() -> list[Tool]:
         get_history,
         get_price,
         get_prices,
-        get_technicals,
         search_news,
     )
 
@@ -166,40 +165,6 @@ async def list_tools() -> list[Tool]:
                     "to_date": {
                         "type": "string",
                         "description": "End date (YYYY-MM-DD)",
-                    },
-                },
-                "required": ["symbol"],
-            },
-        ),
-        Tool(
-            name="get_technicals",
-            description="Get technical indicator data (RSI, SMA, EMA, MACD, Bollinger Bands, etc.) for a symbol. Essential for quantitative analysis.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Stock or ETF symbol",
-                    },
-                    "indicator": {
-                        "type": "string",
-                        "description": "Technical indicator: rsi, sma, ema, macd, bbands",
-                        "default": "rsi",
-                    },
-                    "resolution": {
-                        "type": "string",
-                        "description": "Timeframe: D (day), W (week), M (month)",
-                        "default": "D",
-                    },
-                    "timeperiod": {
-                        "type": "integer",
-                        "description": "Number of periods for the indicator",
-                        "default": 14,
-                    },
-                    "days": {
-                        "type": "integer",
-                        "description": "Days of history to analyze",
-                        "default": 90,
                     },
                 },
                 "required": ["symbol"],
@@ -423,13 +388,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         get_history,
         get_price,
         get_prices,
-        get_technicals,
         search_news,
     )
 
     try:
         # Market data tools (use Finnhub client)
-        if name in ("get_price", "get_prices", "get_history", "get_technicals", "search_news", "get_dividend"):
+        if name in ("get_price", "get_prices", "get_history", "search_news", "get_dividend"):
             finnhub = get_finnhub_client()
 
             if name == "get_price":
@@ -444,15 +408,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     arguments.get("days", 30),
                     arguments.get("from_date"),
                     arguments.get("to_date"),
-                )
-            elif name == "get_technicals":
-                result = get_technicals(
-                    finnhub,
-                    arguments["symbol"],
-                    arguments.get("indicator", "rsi"),
-                    arguments.get("resolution", "D"),
-                    arguments.get("timeperiod", 14),
-                    arguments.get("days", 90),
                 )
             elif name == "search_news":
                 result = search_news(
