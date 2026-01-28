@@ -35,7 +35,6 @@ declare -A BOT_PORTS=(
     ["mel"]=8088
     ["vince"]=8089
     ["rei"]=8090
-    ["test"]=8091
 )
 
 # Function to start a single bot's MCP server
@@ -80,16 +79,12 @@ elif [ "$1" == "--all" ]; then
         sleep 0.5  # Brief delay between starts
     done
     echo "All MCP servers started. Check logs in /tmp/mcp-*.log"
-elif [ "$1" == "--test" ]; then
-    # Start just the test bot
-    start_bot_server "test" 8091
 else
-    echo "Usage: $0 [--bot <bot_id>] [--all] [--test]"
+    echo "Usage: $0 [--bot <bot_id>] [--all]"
     echo ""
     echo "Options:"
     echo "  --bot <bot_id>  Start MCP server for a specific bot"
     echo "  --all           Start MCP servers for all bots"
-    echo "  --test          Start only the test bot MCP server"
     echo ""
     echo "Available bots: ${!BOT_PORTS[*]}"
     exit 1
