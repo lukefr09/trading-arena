@@ -20,17 +20,34 @@ MCP_SERVER_DIR = Path(__file__).parent.parent.parent / "mcp_server"
 class BotRunner:
     """Runs bot trading sessions via Claude Code CLI."""
 
+    # Port assignments for each bot's persistent MCP server
+    BOT_PORTS = {
+        "turtle": 8081,
+        "degen": 8082,
+        "boomer": 8083,
+        "quant": 8084,
+        "doomer": 8085,
+        "gary": 8086,
+        "diana": 8087,
+        "mel": 8088,
+        "vince": 8089,
+        "rei": 8090,
+        "test": 8091,  # Test bot for debugging
+    }
+
     def __init__(
         self,
         model: str = "claude-opus-4-5-20251101",
         cf_api_url: Optional[str] = None,
         cf_api_key: Optional[str] = None,
         finnhub_api_key: Optional[str] = None,
+        use_sse: bool = True,  # Use SSE transport by default
     ):
         self.model = model
         self.cf_api_url = cf_api_url or os.environ.get("CF_API_URL", "")
         self.cf_api_key = cf_api_key or os.environ.get("CF_API_KEY", "")
         self.finnhub_api_key = finnhub_api_key or os.environ.get("FINNHUB_API_KEY", "")
+        self.use_sse = use_sse
 
     def get_system_prompt(self, bot: Bot) -> str:
         """Load system prompt for a bot."""
@@ -118,6 +135,21 @@ class BotRunner:
         Returns:
             MCP config dict
         """
+        if self.use_sse:
+            # Use SSE transport - connect to persistent MCP server
+            port = self.BOT_PORTS.get(bot.id, 8091)  # Default to test port
+            config: dict = {
+                "mcpServers": {
+                    "trading-arena": {
+                        "type": "sse",
+                        "url": f"http://localhost:{port}/sse",
+                    },
+                }
+            }
+            logger.info(f"Using SSE MCP config for {bot.id} on port {port}")
+            return config
+
+        # Fallback: spawn process (original behavior)
         env = {
             "BOT_ID": bot.id,
             "CF_API_URL": self.cf_api_url,
@@ -132,7 +164,7 @@ class BotRunner:
         else:
             logger.warning(f"Bot {bot.id} has no Alpaca credentials - trading will be unavailable")
 
-        config: dict = {
+        config = {
             "mcpServers": {
                 "trading-arena": {
                     "command": "python3",
