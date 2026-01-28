@@ -169,7 +169,7 @@ social.post('/messages', authMiddleware, async (c) => {
   });
 });
 
-// GET /api/social/portfolios - Get all bot portfolios (public)
+// GET /api/social/portfolios - Get all bot portfolios with LIVE Alpaca data
 social.get('/portfolios', async (c) => {
   const db = c.env.DB;
 
@@ -178,70 +178,117 @@ social.get('/portfolios', async (c) => {
   const startingCash = (game?.starting_cash as number) || 100000;
   const currentRound = (game?.current_round as number) || 0;
 
-  // Get all bots
+  // Get all bots with Alpaca credentials
   const botsResult = await db.prepare(`
-    SELECT id, name, type, cash, total_value, last_commentary
+    SELECT id, name, type, cash, total_value, last_commentary, alpaca_api_key, alpaca_secret_key
     FROM bots
+    WHERE enabled = 1
     ORDER BY total_value DESC
   `).all();
 
-  // Get all positions
-  const positionsResult = await db.prepare(`
-    SELECT bot_id, symbol, shares, avg_cost, current_price
-    FROM positions
-  `).all();
+  interface PortfolioEntry {
+    rank: number;
+    id: string;
+    name: string;
+    type: string;
+    cash: number;
+    total_value: number;
+    return_pct: number;
+    last_commentary: string | null;
+    positions: Array<{
+      symbol: string;
+      qty: number;
+      market_value: number;
+      avg_entry_price: number;
+      current_price: number;
+      unrealized_pl: number;
+      unrealized_plpc: number;
+    }>;
+  }
 
-  // Group positions by bot
-  const positionsByBot: Record<string, Array<{
-    symbol: string;
-    shares: number;
-    avg_cost: number;
-    current_price: number | null;
-    market_value: number;
-    gain_pct: number;
-  }>> = {};
+  const portfolios: PortfolioEntry[] = [];
 
-  for (const p of positionsResult.results) {
-    const botId = p.bot_id as string;
-    if (!positionsByBot[botId]) {
-      positionsByBot[botId] = [];
+  // Fetch live data from Alpaca for each bot
+  for (const bot of botsResult.results) {
+    const apiKey = bot.alpaca_api_key as string;
+    const secretKey = bot.alpaca_secret_key as string;
+
+    let cash = bot.cash as number;
+    let totalValue = bot.total_value as number;
+    let positions: PortfolioEntry['positions'] = [];
+
+    if (apiKey && secretKey) {
+      try {
+        // Fetch account
+        const accountRes = await fetch('https://paper-api.alpaca.markets/v2/account', {
+          headers: {
+            'APCA-API-KEY-ID': apiKey,
+            'APCA-API-SECRET-KEY': secretKey,
+          },
+        });
+
+        if (accountRes.ok) {
+          const account = await accountRes.json() as { equity: string; cash: string };
+          totalValue = parseFloat(account.equity);
+          cash = parseFloat(account.cash);
+
+          // Fetch positions
+          const posRes = await fetch('https://paper-api.alpaca.markets/v2/positions', {
+            headers: {
+              'APCA-API-KEY-ID': apiKey,
+              'APCA-API-SECRET-KEY': secretKey,
+            },
+          });
+
+          if (posRes.ok) {
+            const posData = await posRes.json() as Array<{
+              symbol: string;
+              qty: string;
+              market_value: string;
+              avg_entry_price: string;
+              current_price: string;
+              unrealized_pl: string;
+              unrealized_plpc: string;
+            }>;
+
+            positions = posData.map(p => ({
+              symbol: p.symbol,
+              qty: parseFloat(p.qty),
+              market_value: parseFloat(p.market_value),
+              avg_entry_price: parseFloat(p.avg_entry_price),
+              current_price: parseFloat(p.current_price),
+              unrealized_pl: parseFloat(p.unrealized_pl),
+              unrealized_plpc: parseFloat(p.unrealized_plpc) * 100,
+            }));
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching Alpaca data for ${bot.id}:`, error);
+      }
     }
-    const currentPrice = (p.current_price as number | null) || (p.avg_cost as number);
-    const marketValue = (p.shares as number) * currentPrice;
-    const costBasis = (p.shares as number) * (p.avg_cost as number);
-    const gainPct = costBasis > 0 ? ((marketValue - costBasis) / costBasis) * 100 : 0;
 
-    positionsByBot[botId].push({
-      symbol: p.symbol as string,
-      shares: p.shares as number,
-      avg_cost: p.avg_cost as number,
-      current_price: currentPrice,
-      market_value: marketValue,
-      gain_pct: gainPct,
+    portfolios.push({
+      rank: 0, // Set after sorting
+      id: bot.id as string,
+      name: bot.name as string,
+      type: bot.type as string,
+      cash,
+      total_value: totalValue,
+      return_pct: Math.round(((totalValue / startingCash) - 1) * 100 * 100) / 100,
+      last_commentary: bot.last_commentary as string | null,
+      positions,
     });
   }
 
-  const portfolios = botsResult.results.map((bot, index) => {
-    const totalValue = bot.total_value as number;
-    const returnPct = ((totalValue / startingCash) - 1) * 100;
-
-    return {
-      rank: index + 1,
-      id: bot.id,
-      name: bot.name,
-      type: bot.type,
-      cash: bot.cash,
-      total_value: totalValue,
-      return_pct: Math.round(returnPct * 100) / 100,
-      last_commentary: bot.last_commentary,
-      positions: positionsByBot[bot.id as string] || [],
-    };
-  });
+  // Sort by total value and assign ranks
+  portfolios.sort((a, b) => b.total_value - a.total_value);
+  portfolios.forEach((p, i) => { p.rank = i + 1; });
 
   return c.json({
     round: currentRound,
     starting_cash: startingCash,
     portfolios,
+    refreshed_at: new Date().toISOString(),
   });
 });
 
