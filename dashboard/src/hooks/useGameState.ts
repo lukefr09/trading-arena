@@ -60,6 +60,18 @@ export function useGameState(): UseGameStateReturn {
 
   const fetchState = useCallback(async () => {
     try {
+      // Fetch live leaderboard from Alpaca (updates DB too)
+      const liveResponse = await fetch(`${API_URL}/api/leaderboard/live`);
+      if (liveResponse.ok) {
+        const liveData = await liveResponse.json() as {
+          current_round: number;
+          starting_cash: number;
+          leaderboard: LeaderboardEntry[];
+        };
+        setLeaderboard(liveData.leaderboard);
+      }
+
+      // Fetch full state
       const response = await fetch(`${API_URL}/api/state`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -67,20 +79,22 @@ export function useGameState(): UseGameStateReturn {
       const data = await response.json() as GameState;
       setState(data);
 
-      // Build leaderboard from bots
-      const startingCash = data.starting_cash;
-      const sortedBots = [...data.bots].sort((a, b) => b.total_value - a.total_value);
-      const lb: LeaderboardEntry[] = sortedBots.map((bot, index) => ({
-        rank: index + 1,
-        id: bot.id,
-        name: bot.name,
-        type: bot.type,
-        total_value: bot.total_value,
-        return_pct: ((bot.total_value / startingCash) - 1) * 100,
-        last_commentary: bot.last_commentary,
-        updated_at: bot.updated_at,
-      }));
-      setLeaderboard(lb);
+      // If live fetch failed, build leaderboard from state
+      if (!liveResponse.ok) {
+        const startingCash = data.starting_cash;
+        const sortedBots = [...data.bots].sort((a, b) => b.total_value - a.total_value);
+        const lb: LeaderboardEntry[] = sortedBots.map((bot, index) => ({
+          rank: index + 1,
+          id: bot.id,
+          name: bot.name,
+          type: bot.type,
+          total_value: bot.total_value,
+          return_pct: ((bot.total_value / startingCash) - 1) * 100,
+          last_commentary: bot.last_commentary,
+          updated_at: bot.updated_at,
+        }));
+        setLeaderboard(lb);
+      }
 
       // Set recent trades
       setRecentTrades(data.recent_trades);
