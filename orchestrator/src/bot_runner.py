@@ -258,6 +258,13 @@ class BotRunner:
             cmd.append(context)
 
             logger.info(f"Running bot {bot.name} with MCP tools (BOT_ID={bot.id})")
+            logger.info(f"MCP config path: {mcp_config_path}")
+            logger.info(f"Command: {' '.join(cmd)}")
+
+            # Log MCP config contents
+            if mcp_config_path:
+                with open(mcp_config_path, 'r') as f:
+                    logger.info(f"MCP config contents: {f.read()}")
 
             result = subprocess.run(
                 cmd,
