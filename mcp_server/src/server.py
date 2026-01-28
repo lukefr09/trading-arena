@@ -19,11 +19,47 @@ finnhub_client: Optional[FinnhubClient] = None
 trading_client: Optional[TradingClient] = None
 alpaca_client: Optional[AlpacaClient] = None
 
-# Bot ID from environment (set by orchestrator)
+# Bot ID from environment (set by orchestrator or start script)
 BOT_ID = os.environ.get("BOT_ID", "")
-# Alpaca credentials from environment (set by orchestrator)
-ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY", "")
-ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY", "")
+
+# Alpaca credentials - fetched from API on startup
+ALPACA_API_KEY = ""
+ALPACA_SECRET_KEY = ""
+
+
+def _fetch_alpaca_credentials() -> tuple[str, str]:
+    """Fetch Alpaca credentials from the Workers API."""
+    global ALPACA_API_KEY, ALPACA_SECRET_KEY
+
+    if not BOT_ID:
+        return "", ""
+
+    api_url = os.environ.get("CF_API_URL", "")
+    api_key = os.environ.get("CF_API_KEY", "")
+
+    if not api_url or not api_key:
+        return "", ""
+
+    try:
+        import httpx
+        response = httpx.get(
+            f"{api_url.rstrip('/')}/api/bot/{BOT_ID}/credentials",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10.0,
+        )
+        if response.status_code == 200:
+            data = response.json()
+            ALPACA_API_KEY = data.get("alpaca_api_key", "")
+            ALPACA_SECRET_KEY = data.get("alpaca_secret_key", "")
+            return ALPACA_API_KEY, ALPACA_SECRET_KEY
+    except Exception as e:
+        print(f"Failed to fetch Alpaca credentials: {e}")
+
+    return "", ""
+
+
+# Fetch credentials on module load
+_fetch_alpaca_credentials()
 
 
 def get_finnhub_client() -> FinnhubClient:
