@@ -254,7 +254,8 @@ class BotRunner:
 
             # System prompt as initial context
             cmd.extend(["--system-prompt", system_prompt])
-            cmd.extend(["--prompt", context])
+            # Prompt is a positional argument, not a flag
+            cmd.append(context)
 
             logger.info(f"Running bot {bot.name} with MCP tools (BOT_ID={bot.id})")
 

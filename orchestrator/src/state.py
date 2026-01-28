@@ -124,6 +124,25 @@ class StateManager:
             logger.warning(f"Failed to push update: {e}")
             return False
 
+    def get_bot_credentials(self, bot_id: str) -> tuple[str, str] | None:
+        """Fetch Alpaca credentials for a bot.
+
+        Returns:
+            Tuple of (api_key, secret_key) or None if not available
+        """
+        try:
+            response = self._client.get(
+                f"{self.config.cf_api_url}/api/bot/{bot_id}/credentials",
+                headers=self._headers(),
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("alpaca_api_key"), data.get("alpaca_secret_key")
+            return None
+        except httpx.HTTPError as e:
+            logger.warning(f"Failed to get credentials for bot {bot_id}: {e}")
+            return None
+
     def close(self):
         """Close HTTP client."""
         self._client.close()

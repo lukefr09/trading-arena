@@ -86,6 +86,15 @@ class TradingArena:
 
         for bot in bots:
             logger.info(f"Running bot: {bot.name}")
+
+            # Fetch Alpaca credentials for this bot
+            credentials = self.state_manager.get_bot_credentials(bot.id)
+            if credentials:
+                bot.alpaca_api_key, bot.alpaca_secret_key = credentials
+                logger.info(f"Loaded Alpaca credentials for {bot.name}")
+            else:
+                logger.warning(f"No Alpaca credentials for {bot.name}")
+
             result = self._run_single_bot(bot, state)
             results[bot.id] = result
 
