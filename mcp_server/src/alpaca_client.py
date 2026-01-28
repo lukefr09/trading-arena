@@ -221,3 +221,58 @@ class AlpacaClient:
             return clock.get("is_open", False)
         except Exception:
             return False
+
+    def get_crypto_price(self, symbol: str) -> Optional[float]:
+        """Get latest price for a crypto symbol (e.g., BTC/USD).
+
+        Args:
+            symbol: Crypto pair (e.g., BTC/USD, ETH/USD)
+
+        Returns:
+            Latest price or None
+        """
+        try:
+            # Alpaca crypto data API
+            data_client = httpx.Client(
+                base_url="https://data.alpaca.markets",
+                headers={
+                    "APCA-API-KEY-ID": self.api_key,
+                    "APCA-API-SECRET-KEY": self.secret_key,
+                },
+                timeout=10.0,
+            )
+            # Convert BTC/USD to BTCUSD for the API
+            api_symbol = symbol.replace("/", "")
+            response = data_client.get(f"/v1beta3/crypto/us/latest/trades/{api_symbol}")
+            response.raise_for_status()
+            data = response.json()
+            data_client.close()
+            return float(data.get("trade", {}).get("p", 0))
+        except Exception:
+            return None
+
+    def get_stock_price(self, symbol: str) -> Optional[float]:
+        """Get latest price for a stock symbol.
+
+        Args:
+            symbol: Stock symbol (e.g., AAPL, SPY)
+
+        Returns:
+            Latest price or None
+        """
+        try:
+            data_client = httpx.Client(
+                base_url="https://data.alpaca.markets",
+                headers={
+                    "APCA-API-KEY-ID": self.api_key,
+                    "APCA-API-SECRET-KEY": self.secret_key,
+                },
+                timeout=10.0,
+            )
+            response = data_client.get(f"/v2/stocks/{symbol.upper()}/trades/latest")
+            response.raise_for_status()
+            data = response.json()
+            data_client.close()
+            return float(data.get("trade", {}).get("p", 0))
+        except Exception:
+            return None

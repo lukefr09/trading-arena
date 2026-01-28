@@ -470,10 +470,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                         for p in portfolio.positions
                     ]
 
-                    # 2. Get current price
+                    # 2. Get current price - try Finnhub first, fall back to Alpaca
                     finnhub = get_finnhub_client()
                     quote = finnhub.get_quote(symbol)
                     price = quote.get("c", 0)  # Current price
+
+                    # Fall back to Alpaca for crypto or if Finnhub fails
+                    if price <= 0:
+                        if "/" in symbol:  # Crypto (BTC/USD, ETH/USD)
+                            price = alpaca.get_crypto_price(symbol) or 0
+                        else:
+                            price = alpaca.get_stock_price(symbol) or 0
 
                     if price <= 0:
                         result = {"status": "rejected", "reason": f"Could not get price for {symbol}"}
