@@ -232,7 +232,7 @@ class BotRunner:
         config_file_path = None
         if mcp_config_path is None:
             mcp_config = self._generate_mcp_config(bot)
-            config_file_path = Path.home() / f".mcp-config-{bot.id}.json"
+            config_file_path = Path.home() / f"mcp-config-{bot.id}.json"
             with open(config_file_path, 'w') as f:
                 json.dump(mcp_config, f)
             mcp_config_path = str(config_file_path)
