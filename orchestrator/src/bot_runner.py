@@ -273,7 +273,7 @@ class BotRunner:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                cwd=str(Path(__file__).parent.parent),
+                cwd=str(Path.home()),  # Run from home directory where MCP config is
             )
 
             if result.returncode != 0:
