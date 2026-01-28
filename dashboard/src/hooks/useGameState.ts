@@ -100,10 +100,15 @@ export function useGameState(): UseGameStateReturn {
     switch (message.type) {
       case 'leaderboard': {
         const data = message.data as { round: number; leaderboard: LeaderboardEntry[] };
-        setLeaderboard(data.leaderboard.map((bot, index) => ({
-          ...bot,
-          rank: index + 1,
-        })));
+        if (!Array.isArray(data.leaderboard)) break;
+        setLeaderboard(
+          data.leaderboard
+            .filter((bot): bot is LeaderboardEntry => bot != null && typeof bot.id === 'string')
+            .map((bot, index) => ({
+              ...bot,
+              rank: index + 1,
+            }))
+        );
         setState(prev => prev ? { ...prev, current_round: data.round } : null);
         break;
       }
@@ -116,18 +121,22 @@ export function useGameState(): UseGameStateReturn {
 
       case 'bot_update': {
         const data = message.data as { bot?: { id: string; total_value: number }; trades?: Trade[] };
-        if (data.bot) {
+        if (data.bot && typeof data.bot.id === 'string') {
+          const botId = data.bot.id;
+          const botValue = data.bot.total_value;
           setLeaderboard(prev => {
-            const updated = prev.map(entry =>
-              entry.id === data.bot!.id
-                ? { ...entry, total_value: data.bot!.total_value }
-                : entry
-            );
+            const updated = prev
+              .filter((entry): entry is LeaderboardEntry => entry != null && typeof entry.id === 'string')
+              .map(entry =>
+                entry.id === botId
+                  ? { ...entry, total_value: botValue }
+                  : entry
+              );
             return updated.sort((a, b) => b.total_value - a.total_value)
               .map((entry, index) => ({ ...entry, rank: index + 1 }));
           });
         }
-        if (data.trades && data.trades.length > 0) {
+        if (data.trades && Array.isArray(data.trades) && data.trades.length > 0) {
           setRecentTrades(prev => [...data.trades!, ...prev].slice(0, 50));
         }
         break;
