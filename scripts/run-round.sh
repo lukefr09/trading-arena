@@ -7,9 +7,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 LOG_DIR="$PROJECT_ROOT/logs"
 VENV_PYTHON="$PROJECT_ROOT/venv/bin/python3"
+LOCK_FILE="$PROJECT_ROOT/.round-running.lock"
 
 # Create logs directory
 mkdir -p "$LOG_DIR"
+
+# Check for lock - skip if another round is running
+if [ -f "$LOCK_FILE" ]; then
+    PID=$(cat "$LOCK_FILE")
+    if ps -p "$PID" > /dev/null 2>&1; then
+        echo "Another round is already running (PID $PID). Skipping."
+        exit 0
+    else
+        echo "Stale lock file found. Removing."
+        rm -f "$LOCK_FILE"
+    fi
+fi
+
+# Create lock
+echo $$ > "$LOCK_FILE"
+trap "rm -f $LOCK_FILE" EXIT
 
 # Log file with timestamp
 LOG_FILE="$LOG_DIR/round-$(date +%Y%m%d-%H%M%S).log"
@@ -33,10 +50,14 @@ LOG_FILE="$LOG_DIR/round-$(date +%Y%m%d-%H%M%S).log"
         echo "MCP servers already running ($RUNNING_SERVERS ports)"
     fi
 
-    # Run the orchestrator
-    echo "Running orchestrator..."
+    # Run the orchestrator with 30 min timeout
+    echo "Running orchestrator (30 min timeout)..."
     cd "$PROJECT_ROOT"
-    "$VENV_PYTHON" -m orchestrator.src.main
+    timeout 1800 "$VENV_PYTHON" -m orchestrator.src.main || {
+        echo "WARNING: Round timed out or failed!"
+        # Kill any stuck claude processes for bots
+        pkill -f "mcp-config-" 2>/dev/null || true
+    }
 
     echo "=== Trading Round Complete: $(date) ==="
 

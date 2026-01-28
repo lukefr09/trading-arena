@@ -221,7 +221,7 @@ class BotRunner:
         bot: Bot,
         state: GameState,
         mcp_config_path: Optional[str] = None,
-        timeout: int = 180,
+        timeout: int = 300,
     ) -> Optional[str]:
         """Run bot with MCP servers for market data and trading.
 
