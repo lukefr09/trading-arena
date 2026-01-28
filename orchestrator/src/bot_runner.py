@@ -228,17 +228,14 @@ class BotRunner:
         context = self.build_context(bot, state)
 
         # Generate per-bot MCP config if not provided
-        config_file = None
+        # Use a fixed path in home directory (temp files in /tmp have issues with MCP loading)
+        config_file_path = None
         if mcp_config_path is None:
             mcp_config = self._generate_mcp_config(bot)
-            config_file = tempfile.NamedTemporaryFile(
-                mode='w',
-                suffix='.json',
-                delete=False,
-            )
-            json.dump(mcp_config, config_file)
-            config_file.close()
-            mcp_config_path = config_file.name
+            config_file_path = Path.home() / f".mcp-config-{bot.id}.json"
+            with open(config_file_path, 'w') as f:
+                json.dump(mcp_config, f)
+            mcp_config_path = str(config_file_path)
             logger.debug(f"Generated MCP config for {bot.id} at {mcp_config_path}")
 
         try:
@@ -298,9 +295,9 @@ class BotRunner:
             logger.error(f"Error running bot {bot.name}: {e}")
             return None
         finally:
-            # Clean up temp config file
-            if config_file is not None:
+            # Clean up config file
+            if config_file_path is not None:
                 try:
-                    os.unlink(config_file.name)
+                    os.unlink(config_file_path)
                 except OSError:
                     pass
