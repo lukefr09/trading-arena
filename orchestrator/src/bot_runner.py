@@ -275,8 +275,14 @@ class BotRunner:
             )
 
             if result.returncode != 0:
-                logger.error(f"Bot {bot.name} failed: {result.stderr}")
+                logger.error(f"Bot {bot.name} failed with code {result.returncode}")
+                logger.error(f"STDERR: {result.stderr}")
+                logger.error(f"STDOUT: {result.stdout}")
                 return None
+
+            # Log stderr even on success - might show MCP issues
+            if result.stderr:
+                logger.warning(f"Bot {bot.name} stderr: {result.stderr}")
 
             return result.stdout
 

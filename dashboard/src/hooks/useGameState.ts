@@ -115,18 +115,20 @@ export function useGameState(): UseGameStateReturn {
       }
 
       case 'bot_update': {
-        const data = message.data as { bot: { id: string; total_value: number }; trades: Trade[] };
-        setLeaderboard(prev => {
-          const updated = prev.map(entry =>
-            entry.id === data.bot.id
-              ? { ...entry, total_value: data.bot.total_value }
-              : entry
-          );
-          return updated.sort((a, b) => b.total_value - a.total_value)
-            .map((entry, index) => ({ ...entry, rank: index + 1 }));
-        });
-        if (data.trades.length > 0) {
-          setRecentTrades(prev => [...data.trades, ...prev].slice(0, 50));
+        const data = message.data as { bot?: { id: string; total_value: number }; trades?: Trade[] };
+        if (data.bot) {
+          setLeaderboard(prev => {
+            const updated = prev.map(entry =>
+              entry.id === data.bot!.id
+                ? { ...entry, total_value: data.bot!.total_value }
+                : entry
+            );
+            return updated.sort((a, b) => b.total_value - a.total_value)
+              .map((entry, index) => ({ ...entry, rank: index + 1 }));
+          });
+        }
+        if (data.trades && data.trades.length > 0) {
+          setRecentTrades(prev => [...data.trades!, ...prev].slice(0, 50));
         }
         break;
       }
