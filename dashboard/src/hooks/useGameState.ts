@@ -3,7 +3,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import type { GameState, LeaderboardEntry, Trade, WebSocketMessage } from '../types';
+import type { GameState, LeaderboardEntry, Trade, WebSocketMessage, Message, RejectedTrade, BotPortfolio } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
@@ -11,6 +11,9 @@ interface UseGameStateReturn {
   state: GameState | null;
   leaderboard: LeaderboardEntry[];
   recentTrades: Trade[];
+  messages: Message[];
+  rejectedTrades: RejectedTrade[];
+  portfolios: BotPortfolio[];
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -21,8 +24,39 @@ export function useGameState(): UseGameStateReturn {
   const [state, setState] = useState<GameState | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [recentTrades, setRecentTrades] = useState<Trade[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [rejectedTrades, setRejectedTrades] = useState<RejectedTrade[]>([]);
+  const [portfolios, setPortfolios] = useState<BotPortfolio[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const fetchSocialData = useCallback(async () => {
+    try {
+      // Fetch messages, rejected trades, and portfolios in parallel
+      const [messagesRes, rejectedRes, portfoliosRes] = await Promise.all([
+        fetch(`${API_URL}/api/social/messages?limit=50`),
+        fetch(`${API_URL}/api/social/rejected?limit=20`),
+        fetch(`${API_URL}/api/social/portfolios`),
+      ]);
+
+      if (messagesRes.ok) {
+        const data = await messagesRes.json() as { messages: Message[] };
+        setMessages(data.messages);
+      }
+
+      if (rejectedRes.ok) {
+        const data = await rejectedRes.json() as { rejected_trades: RejectedTrade[] };
+        setRejectedTrades(data.rejected_trades);
+      }
+
+      if (portfoliosRes.ok) {
+        const data = await portfoliosRes.json() as { portfolios: BotPortfolio[] };
+        setPortfolios(data.portfolios);
+      }
+    } catch (err) {
+      console.error('Failed to fetch social data:', err);
+    }
+  }, []);
 
   const fetchState = useCallback(async () => {
     try {
@@ -51,13 +85,16 @@ export function useGameState(): UseGameStateReturn {
       // Set recent trades
       setRecentTrades(data.recent_trades);
 
+      // Also fetch social data
+      await fetchSocialData();
+
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch state');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchSocialData]);
 
   const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
     switch (message.type) {
@@ -100,6 +137,18 @@ export function useGameState(): UseGameStateReturn {
         break;
       }
 
+      case 'message': {
+        const msg = message.data as Message;
+        setMessages(prev => [msg, ...prev.slice(0, 49)]);
+        break;
+      }
+
+      case 'rejected_trade': {
+        const rejected = message.data as RejectedTrade;
+        setRejectedTrades(prev => [rejected, ...prev.slice(0, 19)]);
+        break;
+      }
+
       default:
         break;
     }
@@ -120,6 +169,9 @@ export function useGameState(): UseGameStateReturn {
     state,
     leaderboard,
     recentTrades,
+    messages,
+    rejectedTrades,
+    portfolios,
     loading,
     error,
     refresh: fetchState,

@@ -598,3 +598,109 @@ class TradingClient:
             round=data.get("current_round", 0),
             standings=standings,
         )
+
+    # ==================== SOCIAL FEATURES ====================
+
+    def send_message(self, content: str, to_bot: Optional[str] = None) -> dict:
+        """Send a public message or DM to another bot.
+
+        Args:
+            content: Message content
+            to_bot: Bot ID for DM, or None for public message
+
+        Returns:
+            {"success": True, "message_id": ...} or {"success": False, "error": ...}
+        """
+        try:
+            response = self._client.post(
+                "/api/social/messages",
+                json={
+                    "from_bot": self.bot_id,
+                    "to_bot": to_bot,
+                    "content": content,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_messages(self, limit: int = 30) -> list[dict]:
+        """Get recent messages visible to this bot (public + DMs to me).
+
+        Args:
+            limit: Max messages to return
+
+        Returns:
+            List of messages
+        """
+        try:
+            response = self._client.get(
+                f"/api/social/messages/{self.bot_id}",
+                params={"limit": limit},
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("messages", [])
+        except Exception:
+            return []
+
+    def get_all_portfolios(self) -> dict:
+        """Get all bot portfolios with positions and P&L.
+
+        Returns:
+            {"round": ..., "portfolios": [...]}
+        """
+        try:
+            response = self._client.get("/api/social/portfolios")
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_round_context(self) -> dict:
+        """Get full round context including leaderboard, trades, messages, portfolios.
+
+        Returns:
+            Full context dict for this bot
+        """
+        try:
+            response = self._client.get(f"/api/social/context/{self.bot_id}")
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    def record_rejected_trade(
+        self,
+        symbol: str,
+        side: str,
+        shares: int,
+        reason: str,
+    ) -> dict:
+        """Record a rejected trade for entertainment/dashboard.
+
+        Args:
+            symbol: Stock symbol
+            side: BUY or SELL
+            shares: Number of shares attempted
+            reason: Why it was rejected
+
+        Returns:
+            {"success": True} or {"success": False, "error": ...}
+        """
+        try:
+            response = self._client.post(
+                "/api/social/rejected",
+                json={
+                    "bot_id": self.bot_id,
+                    "symbol": symbol.upper(),
+                    "side": side.upper(),
+                    "shares": shares,
+                    "reason": reason,
+                },
+            )
+            response.raise_for_status()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}

@@ -68,6 +68,50 @@ export interface LeaderboardResponse {
 export type WebSocketStatus = 'connecting' | 'connected' | 'disconnected';
 
 export interface WebSocketMessage {
-  type: 'connected' | 'bot_update' | 'leaderboard' | 'trade' | 'round_start' | 'round_end' | 'pong';
+  type: 'connected' | 'bot_update' | 'leaderboard' | 'trade' | 'round_start' | 'round_end' | 'pong' | 'message' | 'rejected_trade';
   data: unknown;
+}
+
+export interface Message {
+  id: number;
+  round: number;
+  from_bot: string;
+  from_name: string;
+  to_bot: string | null;
+  content: string;
+  is_dm: boolean;
+  created_at: string;
+}
+
+export interface RejectedTrade {
+  id: number;
+  bot_id: string;
+  bot_name: string;
+  symbol: string;
+  side: string;
+  shares: number;
+  reason: string;
+  round: number;
+  attempted_at: string;
+}
+
+export interface BotPortfolio {
+  rank: number;
+  id: string;
+  name: string;
+  type: 'baseline' | 'free_agent';
+  cash: number;
+  total_value: number;
+  return_pct: number;
+  last_commentary: string | null;
+  positions: PortfolioPosition[];
+}
+
+export interface PortfolioPosition {
+  symbol: string;
+  shares: number;
+  avg_cost: number;
+  current_price: number | null;
+  market_value: number;
+  gain_pct: number;
 }

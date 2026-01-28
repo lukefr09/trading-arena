@@ -5,6 +5,9 @@
 import { useCallback } from 'react';
 import { Leaderboard } from './components/Leaderboard';
 import { LiveFeed } from './components/LiveFeed';
+import { ChatFeed } from './components/ChatFeed';
+import { RejectedTrades } from './components/RejectedTrades';
+import { PortfolioViewer } from './components/PortfolioViewer';
 import { MarketStatus } from './components/MarketStatus';
 import { useGameState } from './hooks/useGameState';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -43,6 +46,9 @@ export default function App() {
     state,
     leaderboard,
     recentTrades,
+    messages,
+    rejectedTrades,
+    portfolios,
     loading,
     error,
     handleWebSocketMessage,
@@ -116,11 +122,20 @@ export default function App() {
       </header>
 
       <main className="main-content">
-        <Leaderboard
-          entries={leaderboard}
-          currentRound={state?.current_round || 0}
-        />
-        <LiveFeed trades={recentTrades} />
+        <div className="left-column">
+          <Leaderboard
+            entries={leaderboard}
+            currentRound={state?.current_round || 0}
+          />
+          <PortfolioViewer portfolios={portfolios} />
+        </div>
+        <div className="center-column">
+          <LiveFeed trades={recentTrades} />
+          <RejectedTrades trades={rejectedTrades} />
+        </div>
+        <div className="right-column">
+          <ChatFeed messages={messages} />
+        </div>
       </main>
     </div>
   );

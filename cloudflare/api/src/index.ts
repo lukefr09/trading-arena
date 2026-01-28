@@ -10,6 +10,7 @@ import state from './routes/state';
 import leaderboard from './routes/leaderboard';
 import bot from './routes/bot';
 import trades from './routes/trades';
+import social from './routes/social';
 import { authMiddleware } from './middleware/auth';
 
 // Re-export Durable Object
@@ -39,6 +40,7 @@ app.route('/api/state', state);
 app.route('/api/leaderboard', leaderboard);
 app.route('/api/bot', bot);
 app.route('/api/trades', trades);
+app.route('/api/social', social);
 
 // POST /api/round/increment - Increment round counter (authenticated)
 app.post('/api/round/increment', authMiddleware, async (c) => {

@@ -266,6 +266,58 @@ async def list_tools() -> list[Tool]:
                     "required": [],
                 },
             ),
+            # Social tools
+            Tool(
+                name="send_message",
+                description="Send a public message to all bots (trash talk, commentary) or a private DM to a specific bot. Use this to react to trades, taunt rivals, or coordinate.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "Your message content. Be in character!",
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "Bot ID for private DM (turtle, degen, boomer, quant, doomer, gary, diana, mel, vince, rei). Omit for public message.",
+                        },
+                    },
+                    "required": ["content"],
+                },
+            ),
+            Tool(
+                name="get_messages",
+                description="Get recent chat messages (public + DMs to you). See what other bots are saying.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max messages to return",
+                            "default": 30,
+                        },
+                    },
+                    "required": [],
+                },
+            ),
+            Tool(
+                name="get_all_portfolios",
+                description="See EVERYONE's portfolios - cash, positions, and P&L. Know your competition.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            ),
+            Tool(
+                name="get_round_context",
+                description="Get the FULL picture: leaderboard, all recent trades with commentary, rejected trades, chat messages, and DMs to you. Call this at the start of each round!",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            ),
         ])
 
     return tools
@@ -323,7 +375,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 result = get_dividend(finnhub, arguments["symbol"])
 
         # Trading tools (use Trading client + Alpaca client)
-        elif name in ("get_constraints", "get_portfolio", "place_order", "get_leaderboard"):
+        elif name in ("get_constraints", "get_portfolio", "place_order", "get_leaderboard",
+                      "send_message", "get_messages", "get_all_portfolios", "get_round_context"):
             trading = get_trading_client()
             alpaca = get_alpaca_client()
 
@@ -415,6 +468,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                         )
 
                         if not validation.allowed:
+                            # Record rejected trade for entertainment
+                            trading.record_rejected_trade(
+                                symbol=symbol,
+                                side=side,
+                                shares=int(qty),
+                                reason=validation.reason or "Unknown",
+                            )
                             result = {
                                 "status": "rejected",
                                 "reason": validation.reason,
@@ -463,6 +523,25 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                         for e in state.standings
                     ],
                 }
+
+            # Social tools
+            elif name == "send_message":
+                result = trading.send_message(
+                    content=arguments["content"],
+                    to_bot=arguments.get("to"),
+                )
+
+            elif name == "get_messages":
+                messages = trading.get_messages(
+                    limit=arguments.get("limit", 30),
+                )
+                result = {"messages": messages}
+
+            elif name == "get_all_portfolios":
+                result = trading.get_all_portfolios()
+
+            elif name == "get_round_context":
+                result = trading.get_round_context()
 
         else:
             result = {"error": f"Unknown tool: {name}"}

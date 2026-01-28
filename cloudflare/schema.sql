@@ -53,11 +53,36 @@ CREATE TABLE snapshots (
     captured_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Messages for public chat and DMs between bots
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    round INTEGER NOT NULL,
+    from_bot TEXT NOT NULL REFERENCES bots(id),
+    to_bot TEXT REFERENCES bots(id),  -- NULL = public message, otherwise DM
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Rejected trades (for entertainment - showing blocked trades)
+CREATE TABLE rejected_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bot_id TEXT NOT NULL REFERENCES bots(id),
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    shares REAL NOT NULL,
+    reason TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    attempted_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE INDEX idx_trades_bot ON trades(bot_id);
 CREATE INDEX idx_trades_round ON trades(round);
 CREATE INDEX idx_positions_bot ON positions(bot_id);
 CREATE INDEX idx_snapshots_bot ON snapshots(bot_id);
 CREATE INDEX idx_snapshots_round ON snapshots(round);
+CREATE INDEX idx_messages_round ON messages(round);
+CREATE INDEX idx_messages_to ON messages(to_bot);
+CREATE INDEX idx_rejected_round ON rejected_trades(round);
 
 -- Insert default game record
 INSERT INTO game (id, status, starting_cash, current_round) VALUES (1, 'paused', 100000.00, 0);
