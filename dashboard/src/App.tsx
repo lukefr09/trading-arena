@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
@@ -82,12 +82,20 @@ interface GameState {
   starting_cash: number;
 }
 
+const PAGE_SIZE = 50;
+
 export default function TradingArena() {
   const [selectedBot, setSelectedBot] = useState<string | null>(null);
   const [bots, setBots] = useState<Bot[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreTrades, setHasMoreTrades] = useState(true);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [tradesOffset, setTradesOffset] = useState(0);
+  const [messagesOffset, setMessagesOffset] = useState(0);
+  const feedRef = useRef<HTMLDivElement>(null);
 
   const formatNum = (n: number, decimals = 2) =>
     n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -99,13 +107,17 @@ export default function TradingArena() {
     return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (reset = false, botFilter?: string | null) => {
     try {
+      const currentTradesOffset = reset ? 0 : tradesOffset;
+      const currentMessagesOffset = reset ? 0 : messagesOffset;
+      const botParam = botFilter ? `&bot_id=${botFilter}` : '';
+
       const [portfoliosRes, stateRes, tradesRes, messagesRes] = await Promise.all([
         fetch(`${API_URL}/api/social/portfolios`),
         fetch(`${API_URL}/api/state`),
-        fetch(`${API_URL}/api/trades?limit=50`),
-        fetch(`${API_URL}/api/social/messages?limit=50`),
+        fetch(`${API_URL}/api/trades?limit=${PAGE_SIZE}&offset=${currentTradesOffset}${botParam}`),
+        fetch(`${API_URL}/api/social/messages?limit=${PAGE_SIZE}&offset=${currentMessagesOffset}${botParam}`),
       ]);
 
       if (portfoliosRes.ok) {
@@ -122,8 +134,14 @@ export default function TradingArena() {
         });
       }
 
-      const trades: Trade[] = tradesRes.ok ? (await tradesRes.json()).trades || [] : [];
-      const messages: Message[] = messagesRes.ok ? (await messagesRes.json()).messages || [] : [];
+      const tradesData = tradesRes.ok ? await tradesRes.json() : { trades: [], pagination: { total: 0 } };
+      const messagesData = messagesRes.ok ? await messagesRes.json() : { messages: [], pagination: { total: 0 } };
+
+      const trades: Trade[] = tradesData.trades || [];
+      const messages: Message[] = messagesData.messages || [];
+
+      setHasMoreTrades(currentTradesOffset + trades.length < (tradesData.pagination?.total || 0));
+      setHasMoreMessages(currentMessagesOffset + messages.length < (messagesData.pagination?.total || 0));
 
       const tradeEvents: TimelineEvent[] = trades.map(t => ({
         id: `trade-${t.id}`,
@@ -151,19 +169,112 @@ export default function TradingArena() {
       const combined = [...tradeEvents, ...chatEvents]
         .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
-      setTimeline(combined);
+      if (reset) {
+        setTimeline(combined);
+        setTradesOffset(trades.length);
+        setMessagesOffset(messages.length);
+      }
       setLoading(false);
     } catch (err) {
       console.error('Failed to fetch data:', err);
       setLoading(false);
     }
-  }, []);
+  }, [tradesOffset, messagesOffset]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || (!hasMoreTrades && !hasMoreMessages)) return;
+
+    setLoadingMore(true);
+    try {
+      const botParam = selectedBot ? `&bot_id=${selectedBot}` : '';
+      const promises: Promise<Response>[] = [];
+      if (hasMoreTrades) {
+        promises.push(fetch(`${API_URL}/api/trades?limit=${PAGE_SIZE}&offset=${tradesOffset}${botParam}`));
+      }
+      if (hasMoreMessages) {
+        promises.push(fetch(`${API_URL}/api/social/messages?limit=${PAGE_SIZE}&offset=${messagesOffset}${botParam}`));
+      }
+
+      const responses = await Promise.all(promises);
+      let newTradeEvents: TimelineEvent[] = [];
+      let newChatEvents: TimelineEvent[] = [];
+      let idx = 0;
+
+      if (hasMoreTrades) {
+        const tradesData = await responses[idx++].json();
+        const trades: Trade[] = tradesData.trades || [];
+        setHasMoreTrades(tradesOffset + trades.length < (tradesData.pagination?.total || 0));
+        setTradesOffset(prev => prev + trades.length);
+
+        newTradeEvents = trades.map(t => ({
+          id: `trade-${t.id}`,
+          type: 'trade' as const,
+          bot_id: t.bot_id,
+          bot_name: t.bot_name || t.bot_id,
+          time: t.executed_at,
+          action: t.side,
+          qty: t.shares,
+          symbol: t.symbol,
+          price: t.price,
+        }));
+      }
+
+      if (hasMoreMessages) {
+        const messagesData = await responses[idx++].json();
+        const messages: Message[] = messagesData.messages || [];
+        setHasMoreMessages(messagesOffset + messages.length < (messagesData.pagination?.total || 0));
+        setMessagesOffset(prev => prev + messages.length);
+
+        newChatEvents = messages.map(m => ({
+          id: `msg-${m.id}`,
+          type: 'chat' as const,
+          bot_id: m.from_bot,
+          bot_name: m.from_name || m.from_bot,
+          time: m.created_at,
+          message: m.content,
+          is_dm: m.is_dm,
+          to_bot: m.to_bot,
+        }));
+      }
+
+      const newEvents = [...newTradeEvents, ...newChatEvents];
+      if (newEvents.length > 0) {
+        setTimeline(prev => {
+          const existingIds = new Set(prev.map(e => e.id));
+          const uniqueNew = newEvents.filter(e => !existingIds.has(e.id));
+          return [...prev, ...uniqueNew].sort((a, b) =>
+            new Date(b.time).getTime() - new Date(a.time).getTime()
+          );
+        });
+      }
+    } catch (err) {
+      console.error('Failed to load more:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMoreTrades, hasMoreMessages, tradesOffset, messagesOffset, selectedBot]);
+
+  // Initial load and periodic refresh
+  useEffect(() => {
+    fetchData(true, selectedBot);
+    const interval = setInterval(() => fetchData(true, selectedBot), 15000);
+    return () => clearInterval(interval);
+  }, [selectedBot]);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 15000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+    const feedEl = feedRef.current;
+    if (!feedEl) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = feedEl;
+      if (scrollHeight - scrollTop - clientHeight < 200) {
+        loadMore();
+      }
+    };
+
+    feedEl.addEventListener('scroll', handleScroll);
+    return () => feedEl.removeEventListener('scroll', handleScroll);
+  }, [loadMore]);
 
   const selectedPortfolio = bots.find(b => b.id === selectedBot);
   const totalPool = bots.reduce((sum, b) => sum + b.total_value, 0);
@@ -384,65 +495,72 @@ export default function TradingArena() {
               )}
             </span>
             <span style={{ color: '#6e7681', fontWeight: '400' }}>
-              {selectedBot
-                ? timeline.filter(e => e.bot_id === selectedBot || e.to_bot === selectedBot).length
-                : timeline.length} events
+              {timeline.length} events
             </span>
           </div>
-          <div style={styles.panelContent}>
+          <div ref={feedRef} style={styles.panelContent}>
             {timeline.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: '#6e7681' }}>
                 No activity yet
               </div>
             ) : (
-              timeline.filter(e => !selectedBot || e.bot_id === selectedBot || e.to_bot === selectedBot).map((event) => (
-                <div
-                  key={event.id}
-                  style={{
-                    ...styles.feedItem,
-                    ...(event.type === 'trade' ? styles.feedTrade : {}),
-                    borderLeftColor: event.type === 'trade'
-                      ? (event.action === 'BUY' ? '#3fb950' : event.action === 'SELL' ? '#f85149' : '#6e7681')
-                      : 'transparent',
-                  }}
-                >
-                  <span style={styles.feedTime}>{formatTime(event.time)}</span>
-                  <span
-                    style={{ ...styles.feedBot, color: botColors[event.bot_id] || '#888', cursor: 'pointer' }}
-                    onClick={() => setSelectedBot(event.bot_id)}
+              <>
+                {timeline.map((event) => (
+                  <div
+                    key={event.id}
+                    style={{
+                      ...styles.feedItem,
+                      ...(event.type === 'trade' ? styles.feedTrade : {}),
+                      borderLeftColor: event.type === 'trade'
+                        ? (event.action === 'BUY' ? '#3fb950' : event.action === 'SELL' ? '#f85149' : '#6e7681')
+                        : 'transparent',
+                    }}
                   >
-                    {event.bot_name}
-                  </span>
-                  <span style={styles.feedContent}>
-                    {event.type === 'trade' ? (
-                      <>
-                        <span style={{
-                          ...styles.tradeTag,
-                          backgroundColor: event.action === 'BUY' ? '#238636' : event.action === 'SELL' ? '#da3633' : '#30363d',
-                          color: '#fff',
-                        }}>
-                          {event.action}
-                        </span>
-                        <span>
-                          <span style={{ color: '#c9d1d9' }}>{event.qty}</span>
-                          <span style={{ color: '#ff9f1c', marginLeft: '4px', fontWeight: '600' }}>{event.symbol}</span>
-                          <span style={{ color: '#6e7681' }}> @ </span>
-                          <span style={{ color: '#c9d1d9' }}>${event.price?.toFixed(2)}</span>
-                        </span>
-                      </>
-                    ) : (
-                      <span>
-                        {event.is_dm && (
-                          <span style={{ color: '#a855f7', marginRight: '4px' }}>
-                            [DM to {event.to_bot ? event.to_bot.charAt(0).toUpperCase() + event.to_bot.slice(1) : '?'}]
+                    <span style={styles.feedTime}>{formatTime(event.time)}</span>
+                    <span
+                      style={{ ...styles.feedBot, color: botColors[event.bot_id] || '#888', cursor: 'pointer' }}
+                      onClick={() => setSelectedBot(event.bot_id)}
+                    >
+                      {event.bot_name}
+                    </span>
+                    <span style={styles.feedContent}>
+                      {event.type === 'trade' ? (
+                        <>
+                          <span style={{
+                            ...styles.tradeTag,
+                            backgroundColor: event.action === 'BUY' ? '#238636' : event.action === 'SELL' ? '#da3633' : '#30363d',
+                            color: '#fff',
+                          }}>
+                            {event.action}
                           </span>
-                        )}
-                        {event.message}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              ))
+                          <span>
+                            <span style={{ color: '#c9d1d9' }}>{event.qty}</span>
+                            <span style={{ color: '#ff9f1c', marginLeft: '4px', fontWeight: '600' }}>{event.symbol}</span>
+                            <span style={{ color: '#6e7681' }}> @ </span>
+                            <span style={{ color: '#c9d1d9' }}>${event.price?.toFixed(2)}</span>
+                          </span>
+                        </>
+                      ) : (
+                        <span>
+                          {event.is_dm && event.to_bot && (
+                            <span style={{ marginRight: '4px' }}>
+                              [DM to <span style={{ color: botColors[event.to_bot] || '#a855f7', fontWeight: '600' }}>
+                                {event.to_bot.charAt(0).toUpperCase() + event.to_bot.slice(1)}
+                              </span>]
+                            </span>
+                          )}
+                          {event.message}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+                {(hasMoreTrades || hasMoreMessages) && (
+                  <div style={{ padding: '12px', textAlign: 'center', color: '#6e7681', fontSize: '11px' }}>
+                    {loadingMore ? 'Loading more...' : 'Scroll for more'}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

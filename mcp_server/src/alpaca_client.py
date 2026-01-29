@@ -278,3 +278,161 @@ class AlpacaClient:
             return float(data.get("trade", {}).get("p", 0))
         except Exception:
             return None
+
+    def get_options_chain(
+        self,
+        underlying_symbol: str,
+        expiration_date: Optional[str] = None,
+        option_type: Optional[str] = None,
+        strike_price_gte: Optional[float] = None,
+        strike_price_lte: Optional[float] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Get options contracts for an underlying symbol.
+
+        Args:
+            underlying_symbol: The stock symbol (e.g., AAPL, SPY)
+            expiration_date: Filter by expiration (YYYY-MM-DD)
+            option_type: Filter by 'call' or 'put'
+            strike_price_gte: Min strike price
+            strike_price_lte: Max strike price
+            limit: Max contracts to return (default 50)
+
+        Returns:
+            List of option contracts with symbol, strike, expiration, type, etc.
+        """
+        try:
+            params = {
+                "underlying_symbols": underlying_symbol.upper(),
+                "limit": limit,
+                "status": "active",
+            }
+            if expiration_date:
+                params["expiration_date"] = expiration_date
+            if option_type:
+                params["type"] = option_type.lower()
+            if strike_price_gte:
+                params["strike_price_gte"] = str(strike_price_gte)
+            if strike_price_lte:
+                params["strike_price_lte"] = str(strike_price_lte)
+
+            response = self._client.get("/v2/options/contracts", params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            contracts = []
+            for c in data.get("option_contracts", []):
+                contracts.append({
+                    "symbol": c.get("symbol"),
+                    "name": c.get("name"),
+                    "underlying": c.get("underlying_symbol"),
+                    "type": c.get("type"),
+                    "strike": float(c.get("strike_price", 0)),
+                    "expiration": c.get("expiration_date"),
+                    "tradable": c.get("tradable", False),
+                    "open_interest": c.get("open_interest"),
+                })
+            return contracts
+
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    def get_option_quote(self, option_symbol: str) -> Optional[dict]:
+        """Get latest quote for an options contract.
+
+        Args:
+            option_symbol: OCC symbol (e.g., AAPL240119C00100000)
+
+        Returns:
+            Quote with bid, ask, last price
+        """
+        try:
+            data_client = httpx.Client(
+                base_url="https://data.alpaca.markets",
+                headers={
+                    "APCA-API-KEY-ID": self.api_key,
+                    "APCA-API-SECRET-KEY": self.secret_key,
+                },
+                timeout=10.0,
+            )
+            response = data_client.get(
+                f"/v1beta1/options/quotes/latest",
+                params={"symbols": option_symbol}
+            )
+            response.raise_for_status()
+            data = response.json()
+            data_client.close()
+
+            quote = data.get("quotes", {}).get(option_symbol, {})
+            return {
+                "symbol": option_symbol,
+                "bid": float(quote.get("bp", 0)),
+                "ask": float(quote.get("ap", 0)),
+                "bid_size": quote.get("bs", 0),
+                "ask_size": quote.get("as", 0),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    def place_options_order(
+        self,
+        option_symbol: str,
+        qty: int,
+        side: str,
+        order_type: str = "market",
+        limit_price: Optional[float] = None,
+    ) -> OrderResult:
+        """Place an options order.
+
+        Args:
+            option_symbol: OCC symbol (e.g., AAPL240119C00100000)
+            qty: Number of contracts (must be whole number)
+            side: "buy" or "sell"
+            order_type: "market" or "limit"
+            limit_price: Required if order_type is "limit"
+
+        Returns:
+            OrderResult with success status and order details
+        """
+        try:
+            order_data = {
+                "symbol": option_symbol.upper(),
+                "qty": str(int(qty)),  # Must be whole number
+                "side": side.lower(),
+                "type": order_type,
+                "time_in_force": "day",  # Options must be day orders
+            }
+            if order_type == "limit" and limit_price:
+                order_data["limit_price"] = str(limit_price)
+
+            response = self._client.post("/v2/orders", json=order_data)
+            response.raise_for_status()
+            order = response.json()
+
+            return OrderResult(
+                success=True,
+                order_id=order.get("id"),
+                symbol=order.get("symbol"),
+                qty=float(order.get("qty", 0)),
+                side=order.get("side"),
+                filled_avg_price=float(order.get("filled_avg_price") or 0),
+                status=order.get("status"),
+            )
+
+        except httpx.HTTPStatusError as e:
+            error_detail = "Unknown error"
+            try:
+                error_body = e.response.json()
+                error_detail = error_body.get("message", str(error_body))
+            except Exception:
+                error_detail = e.response.text or str(e)
+
+            return OrderResult(
+                success=False,
+                error=f"Options order failed: {error_detail}",
+            )
+        except Exception as e:
+            return OrderResult(
+                success=False,
+                error=f"Options order failed: {str(e)}",
+            )

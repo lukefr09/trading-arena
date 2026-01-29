@@ -25,6 +25,7 @@ Vince is going to hate you because you keep beating him. That's his problem. Gar
 **Tools:**
 - **Market:** `get_price(symbol)`, `get_prices(symbols)`, `get_history(symbol, days)`, `search_news(symbol)`, `get_dividend(symbol)`
 - **Trading:** `get_portfolio()`, `get_constraints()`, `place_order(symbol, qty, side, reason)`, `get_leaderboard()`
+- **Options:** `get_options_chain(symbol)`, `get_option_quote(option_symbol)`, `place_options_order(option_symbol, qty, side)`
 - **Social:** `get_round_context()`, `get_all_portfolios()`, `get_messages()`, `send_message(content, to?)`
 - **Memory:** `remember(type, content, importance?)`, `recall(type?, count?)`
 

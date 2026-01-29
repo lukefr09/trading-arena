@@ -373,6 +373,89 @@ async def list_tools() -> list[Tool]:
                     "required": [],
                 },
             ),
+            # Options tools
+            Tool(
+                name="get_options_chain",
+                description="Get available options contracts for a stock. Returns calls/puts with strikes and expirations. Only available if your bot type allows options trading.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "symbol": {
+                            "type": "string",
+                            "description": "Underlying stock symbol (e.g., AAPL, SPY)",
+                        },
+                        "expiration_date": {
+                            "type": "string",
+                            "description": "Filter by expiration date (YYYY-MM-DD)",
+                        },
+                        "option_type": {
+                            "type": "string",
+                            "enum": ["call", "put"],
+                            "description": "Filter by call or put",
+                        },
+                        "strike_price_gte": {
+                            "type": "number",
+                            "description": "Minimum strike price",
+                        },
+                        "strike_price_lte": {
+                            "type": "number",
+                            "description": "Maximum strike price",
+                        },
+                    },
+                    "required": ["symbol"],
+                },
+            ),
+            Tool(
+                name="get_option_quote",
+                description="Get current bid/ask quote for a specific options contract.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "option_symbol": {
+                            "type": "string",
+                            "description": "OCC options symbol (e.g., AAPL240119C00100000)",
+                        },
+                    },
+                    "required": ["option_symbol"],
+                },
+            ),
+            Tool(
+                name="place_options_order",
+                description="Place an options order. Only available if your bot type allows options. Contracts must be whole numbers.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "option_symbol": {
+                            "type": "string",
+                            "description": "OCC options symbol (e.g., AAPL240119C00100000)",
+                        },
+                        "qty": {
+                            "type": "integer",
+                            "description": "Number of contracts (whole number)",
+                        },
+                        "side": {
+                            "type": "string",
+                            "enum": ["buy", "sell"],
+                            "description": "Buy to open or sell to close",
+                        },
+                        "order_type": {
+                            "type": "string",
+                            "enum": ["market", "limit"],
+                            "description": "Order type (default: market)",
+                            "default": "market",
+                        },
+                        "limit_price": {
+                            "type": "number",
+                            "description": "Limit price (required if order_type is limit)",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Your reasoning for this options trade",
+                        },
+                    },
+                    "required": ["option_symbol", "qty", "side"],
+                },
+            ),
         ])
 
     return tools
@@ -422,7 +505,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         # Trading tools (use Trading client + Alpaca client)
         elif name in ("get_constraints", "get_portfolio", "place_order", "get_leaderboard",
                       "send_message", "get_messages", "get_all_portfolios", "get_round_context",
-                      "remember", "recall"):
+                      "remember", "recall",
+                      "get_options_chain", "get_option_quote", "place_options_order"):
             trading = get_trading_client()
             alpaca = get_alpaca_client()
 
@@ -613,6 +697,72 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     min_importance=arguments.get("min_importance", 1),
                     target_bot=arguments.get("target_bot"),
                 )
+
+            # Options tools
+            elif name == "get_options_chain":
+                if alpaca is None:
+                    result = {"error": "Alpaca not configured - missing API credentials"}
+                else:
+                    result = {
+                        "contracts": alpaca.get_options_chain(
+                            underlying_symbol=arguments["symbol"],
+                            expiration_date=arguments.get("expiration_date"),
+                            option_type=arguments.get("option_type"),
+                            strike_price_gte=arguments.get("strike_price_gte"),
+                            strike_price_lte=arguments.get("strike_price_lte"),
+                        )
+                    }
+
+            elif name == "get_option_quote":
+                if alpaca is None:
+                    result = {"error": "Alpaca not configured - missing API credentials"}
+                else:
+                    result = alpaca.get_option_quote(arguments["option_symbol"])
+
+            elif name == "place_options_order":
+                if alpaca is None:
+                    result = {"error": "Alpaca not configured - missing API credentials"}
+                else:
+                    option_symbol = arguments["option_symbol"].upper()
+                    qty = int(arguments["qty"])
+                    side = arguments["side"].upper()
+                    order_type = arguments.get("order_type", "market")
+                    limit_price = arguments.get("limit_price")
+                    reason = arguments.get("reason")
+
+                    # Execute options order on Alpaca
+                    order_result = alpaca.place_options_order(
+                        option_symbol=option_symbol,
+                        qty=qty,
+                        side=side.lower(),
+                        order_type=order_type,
+                        limit_price=limit_price,
+                    )
+
+                    if not order_result.success:
+                        result = {
+                            "status": "rejected",
+                            "reason": order_result.error,
+                        }
+                    else:
+                        # Record as trade for dashboard (options trades visible too)
+                        fill_price = order_result.filled_avg_price or 0
+                        trading.record_trade(
+                            symbol=option_symbol,
+                            side=side,
+                            shares=qty,
+                            price=fill_price,
+                            reason=reason or f"Options: {side} {qty}x {option_symbol}",
+                        )
+
+                        result = {
+                            "status": "filled",
+                            "symbol": option_symbol,
+                            "qty": qty,
+                            "side": side.lower(),
+                            "price": fill_price,
+                            "order_id": order_result.order_id,
+                        }
 
         else:
             result = {"error": f"Unknown tool: {name}"}

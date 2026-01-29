@@ -38,24 +38,42 @@ interface RejectedTrade {
 social.get('/messages', async (c) => {
   const db = c.env.DB;
   const round = c.req.query('round');
+  const botId = c.req.query('bot_id');
   const limit = parseInt(c.req.query('limit') || '50');
+  const offset = parseInt(c.req.query('offset') || '0');
 
   let query = `
     SELECT m.*, b.name as from_name
     FROM messages m
     JOIN bots b ON m.from_bot = b.id
   `;
+  let countQuery = `SELECT COUNT(*) as count FROM messages m`;
+  const conditions: string[] = [];
   const params: (string | number)[] = [];
 
   if (round) {
-    query += ' WHERE m.round = ?';
+    conditions.push('m.round = ?');
     params.push(parseInt(round));
   }
 
-  query += ' ORDER BY m.created_at DESC LIMIT ?';
-  params.push(limit);
+  if (botId) {
+    // Get messages from this bot OR to this bot (DMs)
+    conditions.push('(m.from_bot = ? OR m.to_bot = ?)');
+    params.push(botId, botId);
+  }
 
-  const result = await db.prepare(query).bind(...params).all();
+  if (conditions.length > 0) {
+    const whereClause = ' WHERE ' + conditions.join(' AND ');
+    query += whereClause;
+    countQuery += whereClause;
+  }
+
+  query += ' ORDER BY m.created_at DESC LIMIT ? OFFSET ?';
+
+  const [result, countResult] = await Promise.all([
+    db.prepare(query).bind(...params, limit, offset).all(),
+    db.prepare(countQuery).bind(...params).first(),
+  ]);
 
   return c.json({
     messages: result.results.map(m => ({
@@ -68,6 +86,11 @@ social.get('/messages', async (c) => {
       is_dm: m.to_bot !== null,
       created_at: m.created_at,
     })),
+    pagination: {
+      limit,
+      offset,
+      total: (countResult?.count as number) || 0,
+    },
   });
 });
 

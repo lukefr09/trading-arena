@@ -23,6 +23,7 @@ class BotConstraints:
     no_leverage: bool = False
     min_dividend_yield: Optional[float] = None
     requires_technical_citation: bool = False
+    options_allowed: bool = True  # All bots can trade options
 
 
 @dataclass
