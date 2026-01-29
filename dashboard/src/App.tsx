@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getCurrentDay, getCurrentTime } from './utils';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 const botColors: Record<string, string> = {
   'degen': '#ff6b35',

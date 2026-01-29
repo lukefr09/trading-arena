@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { GameState, LeaderboardEntry, Trade, WebSocketMessage, Message, RejectedTrade, BotPortfolio } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 interface UseGameStateReturn {
   state: GameState | null;
