@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { getCurrentDay, getCurrentTime } from './utils';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
@@ -438,8 +439,12 @@ export default function TradingArena() {
         </div>
         <div style={styles.headerStats}>
           <div style={styles.headerStat}>
-            <span style={styles.label}>RND</span>
-            <span style={styles.valueAmber}>{gameState?.current_round || 0}</span>
+            <span style={styles.label}>DAY</span>
+            <span style={styles.valueAmber}>{getCurrentDay()}</span>
+          </div>
+          <div style={styles.headerStat}>
+            <span style={styles.label}>TIME</span>
+            <span style={styles.value}>{getCurrentTime()}</span>
           </div>
           <div style={styles.headerStat}>
             <span style={styles.label}>POOL</span>

@@ -3,13 +3,13 @@
  */
 
 import type { LeaderboardEntry } from '../types';
+import { formatDayTime } from '../utils';
 
 interface LeaderboardProps {
   entries: LeaderboardEntry[];
-  currentRound: number;
 }
 
-export function Leaderboard({ entries, currentRound }: LeaderboardProps) {
+export function Leaderboard({ entries }: LeaderboardProps) {
   const formatValue = (value: number | undefined) => {
     if (value == null) return '—';
     return new Intl.NumberFormat('en-US', {
@@ -38,7 +38,7 @@ export function Leaderboard({ entries, currentRound }: LeaderboardProps) {
       <div className="panel-header">
         <span className="panel-title">Leaderboard</span>
         <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-          Round {currentRound}
+          {formatDayTime()}
         </span>
       </div>
       <div className="panel-content">
